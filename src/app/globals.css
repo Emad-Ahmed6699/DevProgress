@@ -1,0 +1,111 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 8%;
+    
+    --accent-color: #adc6ff;
+    --accent-glow: rgba(59, 130, 246, 0.3);
+    --accent-glow-strong: rgba(59, 130, 246, 0.5);
+    --accent-shadow-color: rgba(59, 130, 246, 0.2);
+    --btn-start: #4d8eff;
+    --btn-end: #3131c0;
+  }
+  .dark {
+    --background: 0 0% 8.3%;
+    --foreground: 0 0% 99%;
+  }
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+}
+
+/* DevProgress Design Tokens */
+.glass-card {
+  background: rgba(30, 41, 59, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+  border-color: var(--accent-color);
+  box-shadow: 0 10px 30px -10px var(--accent-shadow-color);
+  transform: translateY(-2px);
+}
+
+.neon-glow {
+  box-shadow: 0 0 15px var(--accent-glow);
+}
+
+.neon-glow:hover {
+  box-shadow: 0 0 25px var(--accent-glow-strong);
+}
+
+.progress-glow {
+  filter: drop-shadow(0 0 4px var(--accent-color));
+}
+
+.gradient-primary {
+  background: linear-gradient(135deg, var(--accent-color), var(--btn-start));
+}
+
+.gradient-btn {
+  background: linear-gradient(135deg, var(--btn-start), var(--btn-end));
+}
+
+/* Dynamic Theme Utility Classes */
+.text-theme-accent {
+  color: var(--accent-color) !important;
+}
+.border-theme-accent {
+  border-color: var(--accent-color) !important;
+}
+.bg-theme-accent {
+  background-color: var(--accent-color) !important;
+}
+.bg-theme-accent-10 {
+  background-color: color-mix(in srgb, var(--accent-color) 10%, transparent) !important;
+}
+.bg-theme-btn {
+  background: linear-gradient(135deg, var(--btn-start), var(--btn-end)) !important;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #060e20;
+}
+::-webkit-scrollbar-thumb {
+  background: #2d3449;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #adc6ff;
+}
+
+/* Heatmap cells */
+.heatmap-cell {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.heatmap-cell:hover {
+  transform: scale(1.5);
+  z-index: 10;
+}
