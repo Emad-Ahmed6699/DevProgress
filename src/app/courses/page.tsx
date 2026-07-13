@@ -43,6 +43,7 @@ interface CourseFormData {
   difficulty: 'EASY' | 'MEDIUM' | 'HARD'
   modules_count: string
   priority: string
+  thumbnail_url: string
 }
 
 const DEFAULT_FORM: CourseFormData = {
@@ -52,6 +53,7 @@ const DEFAULT_FORM: CourseFormData = {
   difficulty: 'MEDIUM',
   modules_count: '10',
   priority: 'Normal',
+  thumbnail_url: '',
 }
 
 export default function CoursesPage() {
@@ -63,6 +65,10 @@ export default function CoursesPage() {
   const [saving, setSaving] = useState(false)
   const [filterDiff, setFilterDiff] = useState('all')
   const [search, setSearch] = useState('')
+
+  const [editingCourse, setEditingCourse] = useState<Course | null>(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
 
   const fetchCourses = useCallback(async () => {
     setLoading(true)
@@ -82,23 +88,108 @@ export default function CoursesPage() {
     setFiltered(result)
   }, [filterDiff, search, courses])
 
+  const uploadImage = async (file: File): Promise<string | null> => {
+    try {
+      setUploading(true)
+      // Try to create the bucket if it doesn't exist
+      await supabase.storage.createBucket('course-thumbnails', { public: true }).catch(() => {})
+      
+      const fileExt = file.name.split('.').pop()
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`
+      const filePath = `thumbnails/${fileName}`
+      
+      const { error } = await supabase.storage
+        .from('course-thumbnails')
+        .upload(filePath, file)
+        
+      if (error) throw error
+      
+      const { data: { publicUrl } } = supabase.storage
+        .from('course-thumbnails')
+        .getPublicUrl(filePath)
+        
+      return publicUrl
+    } catch (err: any) {
+      console.error('Storage upload error:', err)
+      alert('Error uploading image to Supabase Storage: ' + (err.message || err) + '\nUsing fallback URL or continuing.')
+      return null
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleEditClick = (course: Course) => {
+    setEditingCourse(course)
+    setForm({
+      title: course.title,
+      description: course.description || '',
+      category: course.category || '',
+      difficulty: (course.difficulty || 'MEDIUM') as 'EASY' | 'MEDIUM' | 'HARD',
+      modules_count: String(course.modules_count || 10),
+      priority: course.priority || 'Normal',
+      thumbnail_url: course.thumbnail_url || '',
+    })
+    setSelectedFile(null)
+    setOpen(true)
+  }
+
+  const handleOpenChange = (isOpen: boolean) => {
+    setOpen(isOpen)
+    if (!isOpen) {
+      setEditingCourse(null)
+      setForm(DEFAULT_FORM)
+      setSelectedFile(null)
+    }
+  }
+
   const handleSubmit = async () => {
     if (!form.title.trim()) return
     setSaving(true)
-    const { error } = await supabase.from('courses').insert({
+
+    let uploadedUrl = form.thumbnail_url
+    if (selectedFile) {
+      const url = await uploadImage(selectedFile)
+      if (url) {
+        uploadedUrl = url
+      }
+    }
+
+    const courseData = {
       title: form.title.trim(),
       description: form.description || null,
       category: form.category || null,
       difficulty: form.difficulty,
       modules_count: parseInt(form.modules_count) || 0,
-      completed_modules_count: 0,
-      progress: 0,
       priority: form.priority,
-    })
+      thumbnail_url: uploadedUrl || null,
+    }
+
+    let error = null
+    if (editingCourse) {
+      const { error: err } = await supabase
+        .from('courses')
+        .update(courseData)
+        .eq('id', editingCourse.id)
+      error = err
+    } else {
+      const { error: err } = await supabase
+        .from('courses')
+        .insert({
+          ...courseData,
+          completed_modules_count: 0,
+          progress: 0,
+        })
+      error = err
+    }
+
     if (!error) {
       setForm(DEFAULT_FORM)
+      setEditingCourse(null)
+      setSelectedFile(null)
       setOpen(false)
       fetchCourses()
+    } else {
+      alert('Error saving course: ' + error.message)
     }
     setSaving(false)
   }
@@ -133,13 +224,15 @@ export default function CoursesPage() {
               </SelectContent>
             </Select>
 
-            <Dialog open={open} onOpenChange={setOpen}>
+            <Dialog open={open} onOpenChange={handleOpenChange}>
               <DialogTrigger className="gradient-btn text-white px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-semibold neon-glow transition-all active:scale-95">
                 <Plus size={16} /> Add Course
               </DialogTrigger>
               <DialogContent className="bg-[#171f33] border border-white/10 text-[#dae2fd] max-w-md">
                 <DialogHeader>
-                  <DialogTitle className="text-theme-accent text-xl">New Course</DialogTitle>
+                  <DialogTitle className="text-theme-accent text-xl">
+                    {editingCourse ? 'Edit Course' : 'New Course'}
+                  </DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4 mt-2">
                   <div>
@@ -209,16 +302,46 @@ export default function CoursesPage() {
                       </Select>
                     </div>
                   </div>
+                  <div>
+                    <label className="text-xs font-mono text-[#c2c6d6] uppercase tracking-widest mb-1 block">Course Image</label>
+                    <div className="space-y-2">
+                      <Input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => {
+                          if (e.target.files && e.target.files[0]) {
+                            setSelectedFile(e.target.files[0])
+                          }
+                        }}
+                        className="bg-[#222a3d] border-white/5 text-[#dae2fd]"
+                      />
+                      <Input
+                        value={form.thumbnail_url}
+                        onChange={(e) => setForm({ ...form, thumbnail_url: e.target.value })}
+                        placeholder="Or paste image URL..."
+                        className="bg-[#222a3d] border-white/5 text-[#dae2fd] placeholder:text-[#c2c6d6]/40"
+                      />
+                      {(selectedFile || form.thumbnail_url) && (
+                        <div className="relative w-full h-24 rounded-lg overflow-hidden border border-white/10 bg-[#131b2e] flex items-center justify-center">
+                          <img
+                            src={selectedFile ? URL.createObjectURL(selectedFile) : form.thumbnail_url}
+                            alt="Course Preview"
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
                   <div className="flex gap-3 pt-2">
-                    <button onClick={() => setOpen(false)} className="flex-1 py-2.5 rounded-xl text-[#c2c6d6] hover:bg-[#2d3449]/50 transition-all text-sm">
+                    <button onClick={() => handleOpenChange(false)} className="flex-1 py-2.5 rounded-xl text-[#c2c6d6] hover:bg-[#2d3449]/50 transition-all text-sm">
                       Cancel
                     </button>
                     <button
                       onClick={handleSubmit}
-                      disabled={saving || !form.title.trim()}
+                      disabled={saving || uploading || !form.title.trim()}
                       className="flex-1 py-2.5 rounded-xl gradient-btn text-white font-semibold text-sm disabled:opacity-50 transition-all"
                     >
-                      {saving ? 'Creating...' : 'Create Course'}
+                      {saving ? (editingCourse ? 'Saving...' : 'Creating...') : (editingCourse ? 'Save Changes' : 'Create Course')}
                     </button>
                   </div>
                 </div>
@@ -257,11 +380,12 @@ export default function CoursesPage() {
                   )}
                   {/* Hover actions */}
                   <div className="absolute inset-0 flex items-center justify-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity bg-[#0b1326]/50 backdrop-blur-[2px]">
-                    <Link href={`/courses/${course.id}`}>
-                      <button className="bg-theme-accent text-[#002e6a] p-2 rounded-lg hover:scale-110 transition-transform">
-                        <Edit size={16} />
-                      </button>
-                    </Link>
+                    <button
+                      onClick={() => handleEditClick(course)}
+                      className="bg-theme-accent text-[#002e6a] p-2 rounded-lg hover:scale-110 transition-transform"
+                    >
+                      <Edit size={16} />
+                    </button>
                     <button
                       onClick={() => handleDelete(course.id)}
                       className="bg-[#93000a] text-[#ffdad6] p-2 rounded-lg hover:scale-110 transition-transform"
