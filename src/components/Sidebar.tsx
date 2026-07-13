@@ -32,12 +32,12 @@ const themes = {
   blue: {
     name: 'Neon Blue',
     class: 'bg-blue-600',
-    color: '#adc6ff',
-    glow: 'rgba(59, 130, 246, 0.3)',
-    glowStrong: 'rgba(59, 130, 246, 0.5)',
+    color: '#4876e1',
+    glow: 'rgba(45, 32, 139, 0.3)',
+    glowStrong: 'rgba(13, 99, 237, 0.5)',
     shadow: 'rgba(59, 130, 246, 0.2)',
-    btnStart: '#4d8eff',
-    btnEnd: '#3131c0'
+    btnStart: '#447ee2',
+    btnEnd: '#0c0cde'
   },
   green: {
     name: 'Emerald Green',
