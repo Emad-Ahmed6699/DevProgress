@@ -109,9 +109,10 @@ export default function CoursesPage() {
         .getPublicUrl(filePath)
         
       return publicUrl
-    } catch (err: any) {
+    } catch (err) {
       console.error('Storage upload error:', err)
-      alert('Error uploading image to Supabase Storage: ' + (err.message || err) + '\nUsing fallback URL or continuing.')
+      const errMsg = err instanceof Error ? err.message : String(err)
+      alert('Error uploading image to Supabase Storage: ' + errMsg + '\nUsing fallback URL or continuing.')
       return null
     } finally {
       setUploading(false)
