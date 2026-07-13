@@ -105,7 +105,7 @@ export default function ResourcesPage() {
       url: form.url.trim(),
       description: form.description || null,
       type: form.type,
-      course_id: form.course_id || null,
+      course_id: (form.course_id && form.course_id !== 'none') ? form.course_id : null,
       added_by: activeProfile?.id || null,
       likes: 0,
     })
@@ -113,6 +113,8 @@ export default function ResourcesPage() {
       setForm(DEFAULT_FORM)
       setOpen(false)
       fetchAll()
+    } else {
+      alert('Error sharing resource: ' + error.message)
     }
     setSaving(false)
   }

@@ -52,12 +52,12 @@ const themes = {
   violet: {
     name: 'Royal Violet',
     class: 'bg-violet-500',
-    color: '#c0c1ff',
-    glow: 'rgba(192, 193, 255, 0.3)',
-    glowStrong: 'rgba(192, 193, 255, 0.5)',
-    shadow: 'rgba(192, 193, 255, 0.2)',
-    btnStart: '#c0c1ff',
-    btnEnd: '#6366f1'
+    color: '#6b39c2',
+    glow: 'rgba(250, 255, 192, 0.18)',
+    glowStrong: 'rgba(249, 192, 255, 0.67)',
+    shadow: 'rgba(255, 247, 192, 0.2)',
+    btnStart: '#c0edff',
+    btnEnd: '#af63f1'
   },
   red: {
     name: 'Crimson Red',
