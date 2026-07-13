@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, BookOpen, Users, Settings, ChevronDown, Check, Lock, Palette, UserPlus, Trash2 } from 'lucide-react'
+import { LayoutDashboard, BookOpen, Users, Settings, ChevronDown, Check, Lock, Palette, UserPlus, Trash2, Library } from 'lucide-react'
 import { useProfile } from '@/contexts/ProfileContext'
 import { supabase, Profile } from '@/lib/supabase'
 import {
@@ -25,6 +25,7 @@ const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/courses', label: 'Courses', icon: BookOpen },
   { href: '/team', label: 'Team Members', icon: Users },
+  { href: '/resources', label: 'Resources', icon: Library },
 ]
 
 const themes = {

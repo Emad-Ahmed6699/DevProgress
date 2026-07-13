@@ -52,3 +52,26 @@ export interface Activity {
   user?: Profile
   course?: Course
 }
+
+export type ResourceType = 'article' | 'video' | 'github' | 'book' | 'other'
+
+export interface Resource {
+  id: string
+  title: string
+  url: string
+  description: string | null
+  type: ResourceType
+  course_id: string | null
+  added_by: string | null
+  likes: number
+  created_at: string
+  course?: Course
+  author?: Profile
+}
+
+export interface ResourceLike {
+  id: string
+  resource_id: string
+  profile_id: string
+  created_at: string
+}
