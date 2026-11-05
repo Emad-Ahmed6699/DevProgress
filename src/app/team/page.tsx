@@ -1,10 +1,9 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { supabase, Profile, Task } from '@/lib/supabase'
+import { supabase, Profile, Task, Activity } from '@/lib/supabase'
 import Topbar from '@/components/Topbar'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-
 
 const STATUS_BADGE: Record<string, { label: string; color: string; bg: string }> = {
   Active:  { label: 'Active',   color: 'text-[#4edea3]', bg: 'bg-[#4edea3]/10' },
@@ -13,15 +12,67 @@ const STATUS_BADGE: Record<string, { label: string; color: string; bg: string }>
   Offline: { label: 'Offline',  color: 'text-[#ffb4ab]', bg: 'bg-[#ffb4ab]/10' },
 }
 
-const HEATMAP_OPACITIES = [0.1, 0.2, 0.4, 0.6, 0.8, 1.0, 0.7, 0.3, 0.9, 0.5, 0.1, 0.4, 0.6, 0.9, 0.2, 0.7, 0.5, 0.3, 0.8, 0.1]
+interface HeatmapProps {
+  memberTasks: Task[]
+  memberActivities: Activity[]
+}
 
-function HeatmapRow({ seed }: { seed: number }) {
-  const offsets = HEATMAP_OPACITIES.map((o, i) => ((o + seed / 10 + i * 0.07) % 1.0).toFixed(2))
+function HeatmapRow({ memberTasks, memberActivities }: HeatmapProps) {
+  const DAYS = 20
+  const dailyCounts = new Array(DAYS).fill(0)
+  const now = new Date()
+
+  // Calculate actual daily activities for this member
+  memberActivities.forEach((act) => {
+    if (act.created_at) {
+      const actDate = new Date(act.created_at)
+      const diffDays = Math.floor((now.getTime() - actDate.getTime()) / (1000 * 60 * 60 * 24))
+      if (diffDays >= 0 && diffDays < DAYS) {
+        dailyCounts[DAYS - 1 - diffDays] += 1
+      }
+    }
+  })
+
+  // Also include completed / updated tasks for this member
+  memberTasks.forEach((task) => {
+    if (task.updated_at) {
+      const taskDate = new Date(task.updated_at)
+      const diffDays = Math.floor((now.getTime() - taskDate.getTime()) / (1000 * 60 * 60 * 24))
+      if (diffDays >= 0 && diffDays < DAYS) {
+        dailyCounts[DAYS - 1 - diffDays] += 1
+      }
+    }
+  })
+
+  // If member has done tasks but no specific timestamp diff, reflect done tasks
+  const doneTasksCount = memberTasks.filter((t) => t.status === 'done').length
+  const totalRecorded = dailyCounts.reduce((a, b) => a + b, 0)
+  if (totalRecorded === 0 && doneTasksCount > 0) {
+    for (let i = 0; i < Math.min(doneTasksCount, DAYS); i++) {
+      dailyCounts[DAYS - 1 - i] = 1
+    }
+  }
+
   return (
     <div className="flex flex-wrap gap-[4px] bg-[#060e20]/40 p-2 rounded-lg border border-white/5">
-      {offsets.map((opacity, i) => (
-        <div key={i} className="heatmap-cell" style={{ backgroundColor: `rgba(78, 222, 163, ${opacity})` }} />
-      ))}
+      {dailyCounts.map((count, i) => {
+        let bg = 'rgba(255, 255, 255, 0.05)' // inactive / zero activity
+        if (count === 1) bg = 'rgba(78, 222, 163, 0.35)'
+        else if (count === 2) bg = 'rgba(78, 222, 163, 0.65)'
+        else if (count >= 3) bg = 'rgba(78, 222, 163, 1.0)'
+
+        const dayNum = DAYS - 1 - i
+        const dayLabel = dayNum === 0 ? 'Today' : `${dayNum} days ago`
+
+        return (
+          <div
+            key={i}
+            className="heatmap-cell"
+            style={{ backgroundColor: bg }}
+            title={count > 0 ? `${count} ${count === 1 ? 'task/activity' : 'tasks/activities'} (${dayLabel})` : `No activity (${dayLabel})`}
+          />
+        )
+      })}
     </div>
   )
 }
@@ -45,6 +96,7 @@ function getProgressColor(pct: number): string {
 
 interface MemberWithTasks extends Profile {
   tasks: Task[]
+  activities: Activity[]
   taskProgress: number
 }
 
@@ -55,18 +107,21 @@ export default function TeamPage() {
 
   const fetchMembers = useCallback(async () => {
     setLoading(true)
-    const [profilesRes, tasksRes] = await Promise.all([
+    const [profilesRes, tasksRes, activitiesRes] = await Promise.all([
       supabase.from('profiles').select('*').order('name'),
       supabase.from('tasks').select('*, assignee:assignee_id(*)'),
+      supabase.from('activities').select('*'),
     ])
     const profiles = profilesRes.data || []
     const tasks = tasksRes.data || []
+    const activities = activitiesRes.data || []
 
     const membersWithTasks: MemberWithTasks[] = profiles.map((p: Profile) => {
       const memberTasks = tasks.filter((t: Task) => t.assignee_id === p.id)
+      const memberActivities = activities.filter((a: Activity) => a.user_id === p.id)
       const done = memberTasks.filter((t: Task) => t.status === 'done').length
       const taskProgress = memberTasks.length > 0 ? Math.round((done / memberTasks.length) * 100) : 0
-      return { ...p, tasks: memberTasks, taskProgress }
+      return { ...p, tasks: memberTasks, activities: memberActivities, taskProgress }
     })
 
     setMembers(membersWithTasks)
@@ -101,7 +156,7 @@ export default function TeamPage() {
           <>
             {/* Member Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-              {filtered.map((member, idx) => {
+              {filtered.map((member) => {
                 const statusStyle = STATUS_BADGE[member.status] || STATUS_BADGE.Active
                 return (
                   <div key={member.id} className="glass-card p-6 rounded-xl flex flex-col gap-4 group">
@@ -148,7 +203,7 @@ export default function TeamPage() {
                           {getRecentTaskLabel(member.tasks)}
                         </p>
                       </div>
-                      <HeatmapRow seed={idx + 1} />
+                      <HeatmapRow memberTasks={member.tasks} memberActivities={member.activities} />
                     </div>
                   </div>
                 )
@@ -160,12 +215,12 @@ export default function TeamPage() {
             {/* Progress Table */}
             <section>
               <h3 className="text-xl font-semibold text-[#dae2fd] mb-4">Task Progress Overview</h3>
-              <div className="glass-card rounded-xl overflow-hidden">
-                <table className="w-full text-left border-collapse">
+              <div className="glass-card rounded-xl overflow-x-auto border border-white/10 shadow-lg">
+                <table className="w-full min-w-[620px] text-left border-collapse">
                   <thead className="bg-[#222a3d]/50">
                     <tr>
                       {['Member', 'Task Progress', 'Status', 'Last Active'].map((h) => (
-                        <th key={h} className="px-6 py-4 text-xs font-mono text-[#c2c6d6] uppercase tracking-widest border-b border-white/10">{h}</th>
+                        <th key={h} className="px-5 py-3.5 text-xs font-mono text-[#c2c6d6] uppercase tracking-widest border-b border-white/10 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -175,7 +230,7 @@ export default function TeamPage() {
                       const colorClass = getProgressColor(member.taskProgress)
                       return (
                         <tr key={member.id} className="hover:bg-white/5 transition-colors cursor-pointer">
-                          <td className="px-6 py-5">
+                          <td className="px-5 py-4 whitespace-nowrap">
                             <div className="flex items-center gap-3">
                               <Avatar className="w-9 h-9">
                                 <AvatarImage src={member.avatar_url || ''} alt={member.name} />
@@ -189,9 +244,9 @@ export default function TeamPage() {
                               </div>
                             </div>
                           </td>
-                          <td className="px-6 py-5">
+                          <td className="px-5 py-4 whitespace-nowrap">
                             <div className="flex items-center gap-3">
-                              <div className="w-36 h-1.5 bg-[#2d3449]/50 rounded-full overflow-hidden">
+                              <div className="w-32 sm:w-36 h-1.5 bg-[#2d3449]/50 rounded-full overflow-hidden">
                                 <div
                                   className="h-full bg-gradient-to-r from-[#adc6ff] to-[#3131c0] rounded-full"
                                   style={{ width: `${member.taskProgress}%`, filter: 'drop-shadow(0 0 4px rgba(173,198,255,0.4))' }}
@@ -200,13 +255,13 @@ export default function TeamPage() {
                               <span className="text-xs font-mono text-[#c2c6d6]">{member.taskProgress}%</span>
                             </div>
                           </td>
-                          <td className="px-6 py-5">
+                          <td className="px-5 py-4 whitespace-nowrap">
                             <span className={`px-2 py-1 rounded text-xs font-mono font-bold uppercase ${colorClass}`}>
                               {label}
                             </span>
                           </td>
-                          <td className="px-6 py-5 text-sm text-[#c2c6d6]/60 font-mono">
-                            {new Date(member.last_active).toLocaleDateString()}
+                          <td className="px-5 py-4 text-sm text-[#c2c6d6]/60 font-mono whitespace-nowrap">
+                            {member.last_active ? new Date(member.last_active).toLocaleDateString() : 'Recently'}
                           </td>
                         </tr>
                       )

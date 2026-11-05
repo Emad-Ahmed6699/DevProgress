@@ -594,11 +594,11 @@ export default function RoomsPage() {
                       </div>
 
                       <div className="flex items-center justify-between text-xs text-[#c2c6d6]/60">
-                        <p className="truncate text-[11px] pr-2">
+                        <p className="truncate text-[11px] pr-2" dir="auto">
                           {lastMsg ? (
                             <span>
                               <span className="text-[#dae2fd]/70 font-medium">{lastMsg.senderName}: </span>
-                              {lastMsg.content}
+                              <span>{lastMsg.content}</span>
                             </span>
                           ) : (
                             <span className="italic text-[#c2c6d6]/40">
@@ -900,7 +900,10 @@ export default function RoomsPage() {
                             )}
 
                             {/* Message Content */}
-                            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                            <p
+                              dir="auto"
+                              className="text-sm leading-relaxed whitespace-pre-wrap break-words text-start"
+                            >
                               {msg.content}
                             </p>
 
@@ -942,6 +945,7 @@ export default function RoomsPage() {
               >
                 <div className="relative flex-1">
                   <Input
+                    dir="auto"
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
                     onKeyDown={(e) => {
