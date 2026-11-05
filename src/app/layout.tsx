@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import { ProfileProvider } from '@/contexts/ProfileContext'
+import { SidebarProvider } from '@/contexts/SidebarContext'
 import Sidebar from '@/components/Sidebar'
 
 export const metadata: Metadata = {
@@ -20,12 +21,14 @@ export default function RootLayout({
         style={{ backgroundColor: '#0b1326', color: '#dae2fd' }}
       >
         <ProfileProvider>
-          <div className="flex min-h-screen">
-            <Sidebar />
-            <main className="ml-[280px] flex-1 min-h-screen">
-              {children}
-            </main>
-          </div>
+          <SidebarProvider>
+            <div className="flex min-h-screen">
+              <Sidebar />
+              <main className="ml-0 md:ml-[280px] flex-1 min-h-screen w-full min-w-0 overflow-x-hidden">
+                {children}
+              </main>
+            </div>
+          </SidebarProvider>
         </ProfileProvider>
       </body>
     </html>

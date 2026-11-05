@@ -34,7 +34,8 @@ import {
   MessageCircle,
   ExternalLink,
   X,
-  ZoomIn
+  ZoomIn,
+  ArrowLeft
 } from 'lucide-react'
 
 // Color generator for WhatsApp-like sender names
@@ -460,7 +461,11 @@ export default function RoomsPage() {
       {/* Main WhatsApp-style layout */}
       <div className="flex flex-1 mt-16 overflow-hidden">
         {/* ──────── Left Column: Rooms Sidebar ──────── */}
-        <div className="w-[340px] md:w-[380px] flex-shrink-0 flex flex-col border-r border-white/10 bg-[#0f172a]/80 backdrop-blur-md">
+        <div
+          className={`w-full md:w-[380px] flex-shrink-0 flex flex-col border-r border-white/10 bg-[#0f172a]/80 backdrop-blur-md ${
+            activeRoom ? 'hidden md:flex' : 'flex'
+          }`}
+        >
           {/* Rooms Header */}
           <div className="p-4 border-b border-white/5 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
@@ -617,7 +622,11 @@ export default function RoomsPage() {
         </div>
 
         {/* ──────── Right Column: WhatsApp Chat Area ──────── */}
-        <div className="flex-1 flex flex-col bg-[#0b1326] relative overflow-hidden">
+        <div
+          className={`flex-1 flex flex-col bg-[#0b1326] relative overflow-hidden ${
+            !activeRoom ? 'hidden md:flex' : 'flex'
+          }`}
+        >
           {/* No Room Selected State */}
           {!activeRoom ? (
             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#080d1a]/50">
@@ -733,20 +742,29 @@ export default function RoomsPage() {
             /* Joined WhatsApp Chat State */
             <div className="flex-1 flex flex-col h-full overflow-hidden">
               {/* WhatsApp Chat Header */}
-              <div className="h-16 px-5 border-b border-white/10 bg-[#171f33]/90 backdrop-blur-md flex items-center justify-between flex-shrink-0 z-10">
-                <div
-                  onClick={() =>
-                    setPreviewPhoto({
-                      isOpen: true,
-                      title: activeRoom.name,
-                      subtitle: `${activeRoomMembers.length} squad members`,
-                      imageUrl: activeRoom.image_url,
-                      initials: getInitials(activeRoom.name)
-                    })
-                  }
-                  className="flex items-center gap-3 min-w-0 cursor-pointer group/header select-none"
-                  title="Click to view full photo"
-                >
+              <div className="h-16 px-3 sm:px-5 border-b border-white/10 bg-[#171f33]/90 backdrop-blur-md flex items-center justify-between flex-shrink-0 z-10">
+                <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
+                  <button
+                    onClick={() => setActiveRoomId(null)}
+                    className="md:hidden p-1.5 rounded-lg text-[#c2c6d6] hover:text-white hover:bg-white/5 transition-colors -ml-1"
+                    title="Back to rooms list"
+                    aria-label="Back to rooms list"
+                  >
+                    <ArrowLeft size={18} />
+                  </button>
+                  <div
+                    onClick={() =>
+                      setPreviewPhoto({
+                        isOpen: true,
+                        title: activeRoom.name,
+                        subtitle: `${activeRoomMembers.length} squad members`,
+                        imageUrl: activeRoom.image_url,
+                        initials: getInitials(activeRoom.name)
+                      })
+                    }
+                    className="flex items-center gap-2.5 sm:gap-3 min-w-0 cursor-pointer group/header select-none"
+                    title="Click to view full photo"
+                  >
                   <div className="relative flex-shrink-0">
                     <Avatar className="w-11 h-11 rounded-2xl border border-white/10 group-hover/header:border-theme-accent group-hover/header:scale-105 transition-all shadow-md">
                       <AvatarImage src={activeRoom.image_url || ''} alt={activeRoom.name} />
@@ -769,8 +787,9 @@ export default function RoomsPage() {
                     </p>
                   </div>
                 </div>
+              </div>
 
-                <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2">
                   {/* Copy Code Pill */}
                   <button
                     type="button"

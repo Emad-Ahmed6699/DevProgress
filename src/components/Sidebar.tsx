@@ -25,6 +25,7 @@ import {
   X
 } from 'lucide-react'
 import { useProfile } from '@/contexts/ProfileContext'
+import { useSidebar } from '@/contexts/SidebarContext'
 import { supabase, Profile, Room } from '@/lib/supabase'
 import {
   DropdownMenu,
@@ -96,6 +97,7 @@ const themes = {
 export default function Sidebar() {
   const pathname = usePathname()
   const { activeProfile, profiles, setActiveProfile, refreshProfiles } = useProfile()
+  const { isOpen, close } = useSidebar()
 
   // Settings & Theme states
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
@@ -439,14 +441,37 @@ export default function Sidebar() {
 
   return (
     <>
-      <aside className="w-[280px] h-screen fixed left-0 top-0 flex flex-col py-6 z-50 border-r border-white/10 bg-[#0b1326]/60 backdrop-blur-lg">
+      {/* Mobile Backdrop */}
+      {isOpen && (
+        <div
+          onClick={close}
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-40 md:hidden transition-opacity duration-300"
+          aria-hidden="true"
+        />
+      )}
+
+      <aside
+        className={`w-[280px] h-screen fixed left-0 top-0 flex flex-col py-6 z-50 border-r border-white/10 bg-[#0b1326]/95 backdrop-blur-xl transition-transform duration-300 ease-in-out ${
+          isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        }`}
+      >
         {/* Logo */}
-        <div className="px-6 mb-8 flex items-center gap-3">
-          <Logo size={32} />
-          <div>
-            <h1 className="text-2xl font-bold text-theme-accent tracking-tight">DevProgress</h1>
-            <p className="text-xs text-[#c2c6d6]/70 mt-0.5 font-mono">Technical Progression</p>
+        <div className="px-6 mb-8 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Logo size={32} />
+            <div>
+              <h1 className="text-2xl font-bold text-theme-accent tracking-tight">DevProgress</h1>
+              <p className="text-xs text-[#c2c6d6]/70 mt-0.5 font-mono">Technical Progression</p>
+            </div>
           </div>
+          <button
+            onClick={close}
+            className="md:hidden text-[#c2c6d6] hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+            title="Close navigation"
+            aria-label="Close navigation"
+          >
+            <X size={20} />
+          </button>
         </div>
 
         {/* Nav */}
@@ -457,6 +482,7 @@ export default function Sidebar() {
               <Link
                 key={href}
                 href={href}
+                onClick={close}
                 className={`flex items-center gap-4 px-4 py-2.5 rounded-lg transition-all duration-300 group ${
                   isActive
                     ? 'text-theme-accent font-bold border-l-4 border-theme-accent bg-theme-accent-10'
@@ -563,10 +589,10 @@ export default function Sidebar() {
       {/* Settings Dialog */}
       <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
         <DialogContent
-          className={`bg-[#171f33] border border-white/10 text-[#dae2fd] transition-all duration-200 ${
+          className={`bg-[#171f33] border border-white/10 text-[#dae2fd] transition-all duration-200 max-h-[90vh] overflow-y-auto w-[94vw] ${
             settingsMode === 'select'
-              ? 'max-w-[540px] sm:max-w-[540px]'
-              : 'max-w-lg sm:max-w-lg'
+              ? 'sm:max-w-[540px]'
+              : 'sm:max-w-lg'
           }`}
         >
           <DialogHeader>
