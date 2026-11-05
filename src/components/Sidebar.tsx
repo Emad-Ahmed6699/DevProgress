@@ -22,8 +22,7 @@ import {
   CheckCheck,
   Pencil,
   Upload,
-  X,
-  Camera
+  X
 } from 'lucide-react'
 import { useProfile } from '@/contexts/ProfileContext'
 import { supabase, Profile, Room } from '@/lib/supabase'

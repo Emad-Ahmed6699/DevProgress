@@ -5,8 +5,7 @@ import {
   supabase,
   Room,
   RoomMember,
-  RoomMessage,
-  Profile
+  RoomMessage
 } from '@/lib/supabase'
 import { useProfile } from '@/contexts/ProfileContext'
 import Topbar from '@/components/Topbar'
@@ -28,11 +27,8 @@ import {
   CheckCheck,
   Copy,
   Search,
-  Plus,
-  DoorOpen,
   LogOut,
   Smile,
-  Hash,
   ShieldCheck,
   Check,
   MessageCircle,
@@ -92,7 +88,7 @@ function formatMessageDate(dateStr: string) {
 const QUICK_EMOJIS = ['👍', '❤️', '🔥', '😂', '🚀', '🎉', '💻', '👏']
 
 export default function RoomsPage() {
-  const { activeProfile, profiles } = useProfile()
+  const { activeProfile } = useProfile()
 
   // Rooms & State
   const [rooms, setRooms] = useState<Room[]>([])
