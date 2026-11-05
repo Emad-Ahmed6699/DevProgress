@@ -18,6 +18,12 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
   MessagesSquare,
   Send,
   Lock,
@@ -36,7 +42,10 @@ import {
   X,
   ZoomIn,
   ArrowLeft,
-  Camera
+  Camera,
+  Pencil,
+  Trash2,
+  MoreVertical
 } from 'lucide-react'
 
 // Color generator for WhatsApp-like sender names
@@ -131,6 +140,41 @@ export default function RoomsPage() {
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null)
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
+
+  // Edit & Delete message state
+  const [editingMessage, setEditingMessage] = useState<RoomMessage | null>(null)
+
+  const handleStartEdit = (msg: RoomMessage) => {
+    setEditingMessage(msg)
+    setNewMessage(msg.content || '')
+    // Focus input
+    setTimeout(() => {
+      const inputEl = document.getElementById('chat-input')
+      inputEl?.focus()
+    }, 50)
+  }
+
+  const handleCancelEdit = () => {
+    setEditingMessage(null)
+    setNewMessage('')
+  }
+
+  const handleDeleteMessage = async (msgId: string) => {
+    if (!confirm('Are you sure you want to delete this message?')) return
+
+    // Optimistically remove from UI
+    setMessages((prev) => prev.filter((m) => m.id !== msgId))
+
+    const { error } = await supabase
+      .from('room_messages')
+      .delete()
+      .eq('id', msgId)
+
+    if (error) {
+      console.error('Failed to delete message:', error)
+      if (activeRoomId) fetchActiveRoomData(activeRoomId)
+    }
+  }
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -264,48 +308,64 @@ export default function RoomsPage() {
 
     fetchActiveRoomData(activeRoomId)
 
-    // Supabase Realtime subscription for messages in this room
+    // Supabase Realtime subscription for messages in this room (INSERT, UPDATE, DELETE)
     const channel = supabase
       .channel(`room_chat_${activeRoomId}`)
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*',
           schema: 'public',
           table: 'room_messages',
           filter: `room_id=eq.${activeRoomId}`
         },
         async (payload) => {
-          const newMsg = payload.new as RoomMessage
-          // fetch sender details
-          const { data: senderProfile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', newMsg.sender_id)
-            .single()
+          if (payload.eventType === 'INSERT') {
+            const newMsg = payload.new as RoomMessage
+            // fetch sender details
+            const { data: senderProfile } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', newMsg.sender_id)
+              .single()
 
-          const messageWithSender: RoomMessage = {
-            ...newMsg,
-            sender: senderProfile || undefined
-          }
-
-          setMessages((prev) => {
-            // avoid duplicate
-            if (prev.some((m) => m.id === newMsg.id)) return prev
-            return [...prev, messageWithSender]
-          })
-
-          // Update last message preview in room list
-          setRoomLastMessages((prev) => ({
-            ...prev,
-            [activeRoomId]: {
-              content: newMsg.content,
-              time: formatMessageTime(newMsg.created_at),
-              senderName: senderProfile?.name || 'Someone'
+            const messageWithSender: RoomMessage = {
+              ...newMsg,
+              sender: senderProfile || undefined
             }
-          }))
 
-          setTimeout(() => scrollToBottom(true), 50)
+            setMessages((prev) => {
+              // avoid duplicate
+              if (prev.some((m) => m.id === newMsg.id)) return prev
+              return [...prev, messageWithSender]
+            })
+
+            // Update last message preview in room list
+            setRoomLastMessages((prev) => ({
+              ...prev,
+              [activeRoomId]: {
+                content: newMsg.content,
+                time: formatMessageTime(newMsg.created_at),
+                senderName: senderProfile?.name || 'Someone'
+              }
+            }))
+
+            setTimeout(() => scrollToBottom(true), 50)
+          } else if (payload.eventType === 'UPDATE') {
+            const updatedMsg = payload.new as RoomMessage
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === updatedMsg.id
+                  ? { ...m, content: updatedMsg.content, is_edited: updatedMsg.is_edited }
+                  : m
+              )
+            )
+          } else if (payload.eventType === 'DELETE') {
+            const oldId = (payload.old as { id?: string })?.id
+            if (oldId) {
+              setMessages((prev) => prev.filter((m) => m.id !== oldId))
+            }
+          }
         }
       )
       .subscribe()
@@ -321,10 +381,44 @@ export default function RoomsPage() {
     }
   }, [activeRoomId, fetchActiveRoomData])
 
-  /* ──────────────── Send Message ──────────────── */
+  /* ──────────────── Send / Edit Message ──────────────── */
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
-    if ((!newMessage.trim() && !selectedImageFile) || !activeRoomId || !activeProfile || isSending) return
+    if (!activeRoomId || !activeProfile || isSending) return
+    if (!newMessage.trim() && !selectedImageFile) return
+
+    // If editing an existing message
+    if (editingMessage) {
+      const updatedText = newMessage.trim()
+      const targetId = editingMessage.id
+      setEditingMessage(null)
+      setNewMessage('')
+
+      // Optimistic update
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === targetId ? { ...m, content: updatedText, is_edited: true } : m
+        )
+      )
+
+      try {
+        const { error } = await supabase
+          .from('room_messages')
+          .update({
+            content: updatedText,
+            is_edited: true
+          })
+          .eq('id', targetId)
+
+        if (error) {
+          console.error('Failed to update message:', error)
+          if (activeRoomId) fetchActiveRoomData(activeRoomId)
+        }
+      } catch (err) {
+        console.error('Failed to update message:', err)
+      }
+      return
+    }
 
     const content = newMessage.trim()
     const currentImageFile = selectedImageFile
@@ -994,6 +1088,41 @@ export default function RoomsPage() {
                               </div>
                             )}
 
+                            {/* Actions Dropdown for Message Author */}
+                            {isMe && (
+                              <div className="absolute top-1.5 right-1.5 opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity z-10">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger
+                                    aria-label="Message options"
+                                    className="w-6 h-6 rounded-lg bg-black/40 hover:bg-black/70 flex items-center justify-center text-white/80 hover:text-white transition-colors cursor-pointer"
+                                  >
+                                    <MoreVertical size={13} />
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent
+                                    align="end"
+                                    className="bg-[#171f33] border border-white/10 text-[#dae2fd] min-w-[120px] shadow-xl p-1 z-50 rounded-xl"
+                                  >
+                                    {msg.content && (
+                                      <DropdownMenuItem
+                                        onClick={() => handleStartEdit(msg)}
+                                        className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-[#dae2fd] hover:text-white hover:bg-white/10 rounded-lg cursor-pointer transition-colors"
+                                      >
+                                        <Pencil size={13} className="text-theme-accent" />
+                                        <span>Edit</span>
+                                      </DropdownMenuItem>
+                                    )}
+                                    <DropdownMenuItem
+                                      onClick={() => handleDeleteMessage(msg.id)}
+                                      className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg cursor-pointer transition-colors"
+                                    >
+                                      <Trash2 size={13} />
+                                      <span>Delete</span>
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
+                            )}
+
                             {/* Message Content */}
                             {msg.content && (
                               <p
@@ -1006,6 +1135,9 @@ export default function RoomsPage() {
 
                             {/* Time & Double Checkmark */}
                             <div className="flex items-center justify-end gap-1 px-2 pb-0.5 mt-0.5 text-[10px] text-[#c2c6d6]/60">
+                              {msg.is_edited && (
+                                <span className="text-[9px] italic text-[#c2c6d6]/50 mr-0.5">edited</span>
+                              )}
                               <span>{formatMessageTime(msg.created_at)}</span>
                               {isMe && (
                                 <CheckCheck size={13} className="text-theme-accent stroke-[2.5]" />
@@ -1066,6 +1198,29 @@ export default function RoomsPage() {
                 </div>
               )}
 
+              {/* Editing Banner */}
+              {editingMessage && (
+                <div className="px-4 py-2 bg-theme-accent-10 border-t border-theme-accent/30 flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2 duration-150">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Pencil size={14} className="text-theme-accent flex-shrink-0" />
+                    <div className="min-w-0 text-xs">
+                      <p className="font-semibold text-theme-accent">Editing message</p>
+                      <p className="text-[#c2c6d6]/80 truncate max-w-xs sm:max-w-md">
+                        {editingMessage.content}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCancelEdit}
+                    className="p-1 rounded-lg text-[#c2c6d6] hover:text-white hover:bg-white/10 transition-colors"
+                    title="Cancel edit"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              )}
+
               {/* Message Input Bar (WhatsApp style) */}
               <form
                 onSubmit={handleSendMessage}
@@ -1081,21 +1236,24 @@ export default function RoomsPage() {
                 />
 
                 {/* Attach Photo Button */}
-                <button
-                  type="button"
-                  onClick={() => imageInputRef.current?.click()}
-                  className={`w-11 h-11 rounded-xl flex items-center justify-center transition-all flex-shrink-0 border ${
-                    selectedImageFile
-                      ? 'bg-theme-accent-10 text-theme-accent border-theme-accent/50'
-                      : 'bg-[#222a3d] text-[#c2c6d6] hover:text-white border-white/10 hover:bg-white/5'
-                  }`}
-                  title="Attach Photo"
-                >
-                  <Camera size={18} />
-                </button>
+                {!editingMessage && (
+                  <button
+                    type="button"
+                    onClick={() => imageInputRef.current?.click()}
+                    className={`w-11 h-11 rounded-xl flex items-center justify-center transition-all flex-shrink-0 border ${
+                      selectedImageFile
+                        ? 'bg-theme-accent-10 text-theme-accent border-theme-accent/50'
+                        : 'bg-[#222a3d] text-[#c2c6d6] hover:text-white border-white/10 hover:bg-white/5'
+                    }`}
+                    title="Attach Photo"
+                  >
+                    <Camera size={18} />
+                  </button>
+                )}
 
                 <div className="relative flex-1">
                   <Input
+                    id="chat-input"
                     dir="auto"
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
@@ -1104,9 +1262,14 @@ export default function RoomsPage() {
                         e.preventDefault()
                         handleSendMessage()
                       }
+                      if (e.key === 'Escape' && editingMessage) {
+                        handleCancelEdit()
+                      }
                     }}
                     placeholder={
-                      selectedImageFile
+                      editingMessage
+                        ? 'Edit message...'
+                        : selectedImageFile
                         ? 'Add a caption (optional)...'
                         : `Type a message as ${activeProfile?.name || 'Member'}...`
                     }
@@ -1118,10 +1281,12 @@ export default function RoomsPage() {
                   type="submit"
                   disabled={(!newMessage.trim() && !selectedImageFile) || isSending}
                   className="w-11 h-11 rounded-xl bg-theme-btn text-white flex items-center justify-center hover:opacity-90 transition-all disabled:opacity-40 flex-shrink-0 shadow-md"
-                  title="Send message"
+                  title={editingMessage ? 'Save changes' : 'Send message'}
                 >
                   {isSending ? (
                     <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : editingMessage ? (
+                    <Check size={18} className="stroke-[3]" />
                   ) : (
                     <Send size={16} />
                   )}

@@ -100,6 +100,7 @@ export interface RoomMessage {
   sender_id: string
   content: string
   image_url?: string | null
+  is_edited?: boolean
   created_at: string
   sender?: Profile
 }
