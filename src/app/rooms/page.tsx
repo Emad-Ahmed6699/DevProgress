@@ -178,8 +178,12 @@ export default function RoomsPage() {
     setPreEditText('')
   }, [preEditText])
 
-  const handleDeleteMessage = async (msgId: string) => {
-    if (!confirm('Are you sure you want to delete this message?')) return
+  // Delete message confirmation state (WhatsApp custom modal)
+  const [messageToDeleteId, setMessageToDeleteId] = useState<string | null>(null)
+
+  const handleConfirmDelete = async (msgId: string) => {
+    setMessageToDeleteId(null)
+    setActiveMenuMessageId(null)
 
     // Optimistic removal
     setMessages((prev) => prev.filter((m) => m.id !== msgId))
@@ -300,7 +304,9 @@ export default function RoomsPage() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (activeMenuMessageId) {
+        if (messageToDeleteId) {
+          setMessageToDeleteId(null)
+        } else if (activeMenuMessageId) {
           setActiveMenuMessageId(null)
         } else if (previewPhoto) {
           setPreviewPhoto(null)
@@ -311,7 +317,7 @@ export default function RoomsPage() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [previewPhoto, editingMessage, cancelEditingMessage, activeMenuMessageId])
+  }, [previewPhoto, editingMessage, cancelEditingMessage, activeMenuMessageId, messageToDeleteId])
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -1152,7 +1158,7 @@ export default function RoomsPage() {
                             {isMe && (
                               <button
                                 type="button"
-                                onClick={() => handleDeleteMessage(msg.id)}
+                                onClick={() => setMessageToDeleteId(msg.id)}
                                 className="w-7 h-7 rounded-lg hover:bg-rose-500/20 text-[#c2c6d6] hover:text-rose-400 flex items-center justify-center transition-colors"
                                 title="Delete message"
                               >
@@ -1200,9 +1206,9 @@ export default function RoomsPage() {
                                   }}
                                 />
 
-                                {/* WhatsApp-style Popup floating right above the bubble */}
+                                {/* WhatsApp-style Popup: renders below bubble if first message (to prevent header clipping), or above for subsequent */}
                                 <div
-                                  className={`absolute bottom-full mb-2 z-50 flex flex-col gap-1.5 animate-in zoom-in-95 fade-in duration-150 ${
+                                  className={`absolute ${index === 0 ? 'top-full mt-2' : 'bottom-full mb-2'} z-50 flex flex-col gap-1.5 animate-in zoom-in-95 fade-in duration-150 ${
                                     isMe ? 'right-0 items-end' : 'left-0 items-start'
                                   }`}
                                   onClick={(e) => e.stopPropagation()}
@@ -1250,7 +1256,7 @@ export default function RoomsPage() {
                                         type="button"
                                         onClick={() => {
                                           setActiveMenuMessageId(null)
-                                          handleDeleteMessage(msg.id)
+                                          setMessageToDeleteId(msg.id)
                                         }}
                                         className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-xl transition-colors text-left cursor-pointer"
                                       >
@@ -1652,6 +1658,43 @@ export default function RoomsPage() {
                 className="px-4 py-1.5 rounded-lg bg-[#222a3d] hover:bg-[#2d3449] text-xs transition-all"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ──────── Modal: Delete Message Confirmation (WhatsApp style) ──────── */}
+      <Dialog open={!!messageToDeleteId} onOpenChange={(open) => !open && setMessageToDeleteId(null)}>
+        <DialogContent className="bg-[#171f33] border border-white/10 text-[#dae2fd] max-w-sm rounded-2xl p-6 shadow-2xl">
+          <div className="flex flex-col items-center text-center">
+            <div className="w-12 h-12 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-400 flex items-center justify-center mb-4 shadow-lg shadow-rose-500/10">
+              <Trash2 size={24} />
+            </div>
+            <h3 className="text-base font-bold text-[#dae2fd] mb-2">Delete message?</h3>
+            <p className="text-xs text-[#c2c6d6]/70 leading-relaxed mb-6">
+              Are you sure you want to delete this message? This action cannot be undone and will remove it for everyone in the room.
+            </p>
+
+            <div className="flex items-center gap-3 w-full">
+              <button
+                type="button"
+                onClick={() => setMessageToDeleteId(null)}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-white/5 hover:bg-white/10 text-[#dae2fd] font-medium text-xs transition-colors border border-white/10 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (messageToDeleteId) {
+                    handleConfirmDelete(messageToDeleteId)
+                  }
+                }}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-medium text-xs transition-colors shadow-lg shadow-rose-600/30 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 size={14} />
+                <span>Delete for everyone</span>
               </button>
             </div>
           </div>
