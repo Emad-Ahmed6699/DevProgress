@@ -1,11 +1,32 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, BookOpen, Users, Settings, ChevronDown, Check, Lock, Palette, UserPlus, Trash2, Library } from 'lucide-react'
+import {
+  LayoutDashboard,
+  BookOpen,
+  Users,
+  Settings,
+  ChevronDown,
+  Check,
+  Lock,
+  Palette,
+  UserPlus,
+  Trash2,
+  Library,
+  MessagesSquare,
+  Hash,
+  Key,
+  Copy,
+  CheckCheck,
+  Pencil,
+  Upload,
+  X,
+  Camera
+} from 'lucide-react'
 import { useProfile } from '@/contexts/ProfileContext'
-import { supabase, Profile } from '@/lib/supabase'
+import { supabase, Profile, Room } from '@/lib/supabase'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,12 +41,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import Logo from '@/components/Logo'
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/courses', label: 'Courses', icon: BookOpen },
   { href: '/team', label: 'Team Members', icon: Users },
   { href: '/resources', label: 'Resources', icon: Library },
+  { href: '/rooms', label: 'Rooms', icon: MessagesSquare },
 ]
 
 const themes = {
@@ -77,7 +100,9 @@ export default function Sidebar() {
 
   // Settings & Theme states
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [settingsMode, setSettingsMode] = useState<'select' | 'theme' | 'login' | 'manage'>('select')
+  const [settingsMode, setSettingsMode] = useState<'select' | 'theme' | 'login' | 'manage' | 'manage-rooms'>('select')
+  const [targetManageMode, setTargetManageMode] = useState<'manage' | 'manage-rooms'>('manage')
+  const [isAdminVerified, setIsAdminVerified] = useState(false)
   const [activeTheme, setActiveTheme] = useState<keyof typeof themes>('blue')
 
   // Login states
@@ -85,16 +110,33 @@ export default function Sidebar() {
   const [password, setPassword] = useState('')
   const [loginError, setLoginError] = useState('')
 
-  // Add member states
-  const [newMemberName, setNewMemberName] = useState('')
-  const [newMemberRole, setNewMemberRole] = useState('')
-  const [newMemberAvatar, setNewMemberAvatar] = useState('')
+  // Member management states (Add & Edit)
+  const [editingMember, setEditingMember] = useState<Profile | null>(null)
+  const [memberName, setMemberName] = useState('')
+  const [memberRole, setMemberRole] = useState('')
+  const [memberAvatarUrl, setMemberAvatarUrl] = useState('')
+  const [avatarFile, setAvatarFile] = useState<File | null>(null)
+  const [avatarPreview, setAvatarPreview] = useState('')
   const [isSavingMember, setIsSavingMember] = useState(false)
-  const [addMemberError, setAddMemberError] = useState('')
-  const [addMemberSuccess, setAddMemberSuccess] = useState(false)
-
-  // Delete member states
+  const [memberError, setMemberError] = useState('')
+  const [memberSuccess, setMemberSuccess] = useState('')
   const [deletingMemberId, setDeletingMemberId] = useState<string | null>(null)
+  const memberFileInputRef = useRef<HTMLInputElement>(null)
+
+  // Room management states
+  const [roomsList, setRoomsList] = useState<Room[]>([])
+  const [newRoomName, setNewRoomName] = useState('')
+  const [newRoomCode, setNewRoomCode] = useState('')
+  const [newRoomImage, setNewRoomImage] = useState('')
+  const [roomImageFile, setRoomImageFile] = useState<File | null>(null)
+  const [roomImagePreview, setRoomImagePreview] = useState('')
+  const [newRoomDescription, setNewRoomDescription] = useState('')
+  const [isSavingRoom, setIsSavingRoom] = useState(false)
+  const [addRoomError, setAddRoomError] = useState('')
+  const [addRoomSuccess, setAddRoomSuccess] = useState(false)
+  const [deletingRoomId, setDeletingRoomId] = useState<string | null>(null)
+  const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null)
+  const roomFileInputRef = useRef<HTMLInputElement>(null)
 
   // Sidebar profiles/activities feed
   const [sidebarMembers, setSidebarMembers] = useState<(Profile & { latestActivity: string })[]>([])
@@ -112,6 +154,16 @@ export default function Sidebar() {
     document.documentElement.style.setProperty('--btn-end', t.btnEnd)
     setActiveTheme(key)
     localStorage.setItem('dev-progress-theme', key)
+  }, [])
+
+  const fetchRooms = useCallback(async () => {
+    const { data } = await supabase
+      .from('rooms')
+      .select('*')
+      .order('created_at', { ascending: false })
+    if (data) {
+      setRoomsList(data)
+    }
   }, [])
 
   const fetchSidebarMembers = useCallback(async () => {
@@ -143,10 +195,20 @@ export default function Sidebar() {
     fetchSidebarMembers()
   }, [changeTheme, fetchSidebarMembers, activeProfile])
 
+  useEffect(() => {
+    if (settingsMode === 'manage-rooms') {
+      fetchRooms()
+    }
+  }, [settingsMode, fetchRooms])
+
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault()
     if (email === 'emadahmed@gmail.com' && password === 'emadahmed') {
-      setSettingsMode('manage')
+      setIsAdminVerified(true)
+      setSettingsMode(targetManageMode)
+      if (targetManageMode === 'manage-rooms') {
+        fetchRooms()
+      }
       setLoginError('')
       setEmail('')
       setPassword('')
@@ -155,49 +217,135 @@ export default function Sidebar() {
     }
   }
 
-  const handleAddMemberSubmit = async (e: React.FormEvent) => {
+  const uploadImageFile = async (file: File, folder = 'avatars'): Promise<string> => {
+    const fileExt = file.name.split('.').pop() || 'png'
+    const fileName = `${folder}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${fileExt}`
+    const { error: uploadError } = await supabase.storage
+      .from('avatars')
+      .upload(fileName, file, { contentType: file.type, upsert: true })
+
+    if (uploadError) {
+      throw new Error(`Upload failed: ${uploadError.message}`)
+    }
+
+    const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(fileName)
+    return urlData.publicUrl
+  }
+
+  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      setAvatarFile(file)
+      setAvatarPreview(URL.createObjectURL(file))
+      setMemberAvatarUrl('')
+    }
+  }
+
+  const handleRemoveAvatar = () => {
+    setAvatarFile(null)
+    setAvatarPreview('')
+    setMemberAvatarUrl('')
+    if (memberFileInputRef.current) memberFileInputRef.current.value = ''
+  }
+
+  const handleStartEditMember = (p: Profile) => {
+    setEditingMember(p)
+    setMemberName(p.name)
+    setMemberRole(p.role)
+    setMemberAvatarUrl(p.avatar_url || '')
+    setAvatarPreview(p.avatar_url || '')
+    setAvatarFile(null)
+    setMemberError('')
+    setMemberSuccess('')
+    if (memberFileInputRef.current) memberFileInputRef.current.value = ''
+  }
+
+  const handleCancelEdit = () => {
+    setEditingMember(null)
+    setMemberName('')
+    setMemberRole('')
+    setMemberAvatarUrl('')
+    setAvatarPreview('')
+    setAvatarFile(null)
+    setMemberError('')
+    setMemberSuccess('')
+    if (memberFileInputRef.current) memberFileInputRef.current.value = ''
+  }
+
+  const handleSaveMemberSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newMemberName.trim() || !newMemberRole.trim()) return
+    if (!memberName.trim() || !memberRole.trim()) return
     setIsSavingMember(true)
-    setAddMemberError('')
-    setAddMemberSuccess(false)
+    setMemberError('')
+    setMemberSuccess('')
 
-    const insertData: Record<string, unknown> = {
-      name: newMemberName.trim(),
-      role: newMemberRole.trim(),
-      status: 'Active',
-    }
-    if (newMemberAvatar.trim()) insertData.avatar_url = newMemberAvatar.trim()
+    try {
+      let finalAvatarUrl: string | null = memberAvatarUrl.trim() || null
 
-    const { data, error } = await supabase.from('profiles').insert(insertData).select()
-    console.log('[AddMember] result:', { data, error })
+      if (avatarFile) {
+        finalAvatarUrl = await uploadImageFile(avatarFile, 'avatar')
+      } else if (!avatarPreview) {
+        finalAvatarUrl = null
+      }
 
-    if (error) {
-      setAddMemberError(error.message)
-    } else {
-      setAddMemberSuccess(true)
-      setNewMemberName('')
-      setNewMemberRole('')
-      setNewMemberAvatar('')
+      if (editingMember) {
+        const { error } = await supabase
+          .from('profiles')
+          .update({
+            name: memberName.trim(),
+            role: memberRole.trim(),
+            avatar_url: finalAvatarUrl,
+          })
+          .eq('id', editingMember.id)
+
+        if (error) throw error
+
+        setMemberSuccess('Member updated successfully!')
+        handleCancelEdit()
+      } else {
+        const insertData: Record<string, unknown> = {
+          name: memberName.trim(),
+          role: memberRole.trim(),
+          status: 'Active',
+          avatar_url: finalAvatarUrl,
+        }
+
+        const { error } = await supabase.from('profiles').insert(insertData)
+        if (error) throw error
+
+        setMemberSuccess('Member added successfully!')
+        setMemberName('')
+        setMemberRole('')
+        setMemberAvatarUrl('')
+        setAvatarPreview('')
+        setAvatarFile(null)
+        if (memberFileInputRef.current) memberFileInputRef.current.value = ''
+      }
+
       await Promise.all([fetchSidebarMembers(), refreshProfiles()])
-      setTimeout(() => setAddMemberSuccess(false), 2000)
+      setTimeout(() => setMemberSuccess(''), 2500)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to save member'
+      setMemberError(msg)
+    } finally {
+      setIsSavingMember(false)
     }
-    setIsSavingMember(false)
   }
 
   const handleDeleteMember = async (profileId: string) => {
     if (deletingMemberId) return
     setDeletingMemberId(profileId)
     try {
-      // Delete related records first
       await supabase.from('activities').delete().eq('user_id', profileId)
       await supabase.from('tasks').update({ assignee_id: null }).eq('assignee_id', profileId)
       const { error } = await supabase.from('profiles').delete().eq('id', profileId)
       if (!error) {
-        // If we deleted the active profile, switch to another one
         if (activeProfile?.id === profileId && profiles.length > 1) {
-          const next = profiles.find(p => p.id !== profileId)
+          const next = profiles.find((p) => p.id !== profileId)
           if (next) setActiveProfile(next)
+        }
+        if (editingMember?.id === profileId) {
+          handleCancelEdit()
         }
         await Promise.all([fetchSidebarMembers(), refreshProfiles()])
       }
@@ -206,13 +354,100 @@ export default function Sidebar() {
     }
   }
 
+  const handleRoomImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      setRoomImageFile(file)
+      setRoomImagePreview(URL.createObjectURL(file))
+      setNewRoomImage('')
+    }
+  }
+
+  const handleRemoveRoomImage = () => {
+    setRoomImageFile(null)
+    setRoomImagePreview('')
+    setNewRoomImage('')
+    if (roomFileInputRef.current) roomFileInputRef.current.value = ''
+  }
+
+  const handleAddRoomSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newRoomName.trim() || !newRoomCode.trim()) return
+    setIsSavingRoom(true)
+    setAddRoomError('')
+    setAddRoomSuccess(false)
+
+    try {
+      let finalRoomImage: string | null = newRoomImage.trim() || null
+      if (roomImageFile) {
+        finalRoomImage = await uploadImageFile(roomImageFile, 'room')
+      }
+
+      const insertData: Record<string, unknown> = {
+        name: newRoomName.trim(),
+        code: newRoomCode.trim(),
+      }
+      if (finalRoomImage) insertData.image_url = finalRoomImage
+      if (newRoomDescription.trim()) insertData.description = newRoomDescription.trim()
+      if (activeProfile?.id) insertData.created_by = activeProfile.id
+
+      const { data, error } = await supabase.from('rooms').insert(insertData).select()
+      if (error) throw error
+
+      if (data && data[0] && activeProfile?.id) {
+        await supabase.from('room_members').upsert({
+          room_id: data[0].id,
+          profile_id: activeProfile.id
+        })
+      }
+
+      setAddRoomSuccess(true)
+      setNewRoomName('')
+      setNewRoomCode('')
+      setNewRoomImage('')
+      setNewRoomDescription('')
+      handleRemoveRoomImage()
+      await fetchRooms()
+      setTimeout(() => setAddRoomSuccess(false), 2000)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to create room'
+      setAddRoomError(msg)
+    } finally {
+      setIsSavingRoom(false)
+    }
+  }
+
+  const handleDeleteRoom = async (roomId: string) => {
+    if (deletingRoomId) return
+    setDeletingRoomId(roomId)
+    try {
+      await supabase.from('room_messages').delete().eq('room_id', roomId)
+      await supabase.from('room_members').delete().eq('room_id', roomId)
+      const { error } = await supabase.from('rooms').delete().eq('id', roomId)
+      if (!error) {
+        await fetchRooms()
+      }
+    } finally {
+      setDeletingRoomId(null)
+    }
+  }
+
+  const handleCopyCode = (roomId: string, code: string) => {
+    navigator.clipboard.writeText(code)
+    setCopiedCodeId(roomId)
+    setTimeout(() => setCopiedCodeId(null), 2000)
+  }
+
   return (
     <>
       <aside className="w-[280px] h-screen fixed left-0 top-0 flex flex-col py-6 z-50 border-r border-white/10 bg-[#0b1326]/60 backdrop-blur-lg">
         {/* Logo */}
-        <div className="px-6 mb-8">
-          <h1 className="text-2xl font-bold text-theme-accent tracking-tight">DevProgress</h1>
-          <p className="text-xs text-[#c2c6d6]/70 mt-0.5 font-mono">Technical Progression</p>
+        <div className="px-6 mb-8 flex items-center gap-3">
+          <Logo size={32} />
+          <div>
+            <h1 className="text-2xl font-bold text-theme-accent tracking-tight">DevProgress</h1>
+            <p className="text-xs text-[#c2c6d6]/70 mt-0.5 font-mono">Technical Progression</p>
+          </div>
         </div>
 
         {/* Nav */}
@@ -328,32 +563,63 @@ export default function Sidebar() {
 
       {/* Settings Dialog */}
       <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-        <DialogContent className="bg-[#171f33] border border-white/10 text-[#dae2fd] max-w-md">
+        <DialogContent
+          className={`bg-[#171f33] border border-white/10 text-[#dae2fd] transition-all duration-200 ${
+            settingsMode === 'select'
+              ? 'max-w-[540px] sm:max-w-[540px]'
+              : 'max-w-lg sm:max-w-lg'
+          }`}
+        >
           <DialogHeader>
             <DialogTitle className="text-theme-accent text-xl">Settings & Customization</DialogTitle>
           </DialogHeader>
 
           {/* ── SELECT ── */}
           {settingsMode === 'select' && (
-            <div className="grid grid-cols-2 gap-4 py-4">
+            <div className="grid grid-cols-3 gap-3 py-4">
               <button
                 onClick={() => setSettingsMode('theme')}
-                className="flex flex-col items-center gap-3 p-4 rounded-xl border border-white/5 bg-[#222a3d]/30 hover:border-theme-accent/50 hover:bg-[#222a3d]/60 transition-all"
+                className="flex flex-col items-center justify-center gap-3.5 py-5 px-3 rounded-2xl border border-white/5 bg-[#222a3d]/30 hover:border-theme-accent/50 hover:bg-[#222a3d]/60 transition-all text-center group cursor-pointer"
               >
-                <div className="w-12 h-12 rounded-lg bg-theme-accent-10 flex items-center justify-center text-theme-accent">
+                <div className="w-12 h-12 rounded-xl bg-theme-accent-10 flex items-center justify-center text-theme-accent group-hover:scale-105 transition-transform">
                   <Palette size={24} />
                 </div>
-                <span className="font-semibold text-sm">Customize Theme</span>
+                <span className="font-semibold text-sm whitespace-nowrap">Customize Theme</span>
               </button>
 
               <button
-                onClick={() => setSettingsMode('login')}
-                className="flex flex-col items-center gap-3 p-4 rounded-xl border border-white/5 bg-[#222a3d]/30 hover:border-theme-accent/50 hover:bg-[#222a3d]/60 transition-all"
+                onClick={() => {
+                  if (isAdminVerified) {
+                    setSettingsMode('manage')
+                  } else {
+                    setTargetManageMode('manage')
+                    setSettingsMode('login')
+                  }
+                }}
+                className="flex flex-col items-center justify-center gap-3.5 py-5 px-3 rounded-2xl border border-white/5 bg-[#222a3d]/30 hover:border-theme-accent/50 hover:bg-[#222a3d]/60 transition-all text-center group cursor-pointer"
               >
-                <div className="w-12 h-12 rounded-lg bg-theme-accent-10 flex items-center justify-center text-theme-accent">
+                <div className="w-12 h-12 rounded-xl bg-theme-accent-10 flex items-center justify-center text-theme-accent group-hover:scale-105 transition-transform">
                   <UserPlus size={24} />
                 </div>
-                <span className="font-semibold text-sm">Manage Members</span>
+                <span className="font-semibold text-sm whitespace-nowrap">Manage Members</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  if (isAdminVerified) {
+                    setSettingsMode('manage-rooms')
+                    fetchRooms()
+                  } else {
+                    setTargetManageMode('manage-rooms')
+                    setSettingsMode('login')
+                  }
+                }}
+                className="flex flex-col items-center justify-center gap-3.5 py-5 px-3 rounded-2xl border border-white/5 bg-[#222a3d]/30 hover:border-theme-accent/50 hover:bg-[#222a3d]/60 transition-all text-center group cursor-pointer"
+              >
+                <div className="w-12 h-12 rounded-xl bg-theme-accent-10 flex items-center justify-center text-theme-accent group-hover:scale-105 transition-transform">
+                  <MessagesSquare size={24} />
+                </div>
+                <span className="font-semibold text-sm whitespace-nowrap">Manage Rooms</span>
               </button>
             </div>
           )}
@@ -395,7 +661,9 @@ export default function Sidebar() {
             <form onSubmit={handleLogin} className="space-y-4 py-2">
               <div className="flex items-center gap-3 mb-2">
                 <Lock size={16} className="text-theme-accent" />
-                <h4 className="text-xs font-mono text-[#c2c6d6] uppercase tracking-wider">Admin Verification</h4>
+                <h4 className="text-xs font-mono text-[#c2c6d6] uppercase tracking-wider">
+                  Admin Verification ({targetManageMode === 'manage-rooms' ? 'Rooms' : 'Members'})
+                </h4>
               </div>
               <div>
                 <label className="text-xs font-mono text-[#c2c6d6]/70 uppercase tracking-widest mb-1 block">Email</label>
@@ -441,19 +709,39 @@ export default function Sidebar() {
           {/* ── MANAGE MEMBERS ── */}
           {settingsMode === 'manage' && (
             <div className="py-2 space-y-5">
+              {/* Add / Edit Member Form */}
+              <form onSubmit={handleSaveMemberSubmit} className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-mono text-[#c2c6d6] uppercase tracking-wider flex items-center gap-2">
+                    {editingMember ? (
+                      <>
+                        <Pencil size={13} className="text-theme-accent" /> Edit Member
+                      </>
+                    ) : (
+                      <>
+                        <UserPlus size={13} /> Add New Member
+                      </>
+                    )}
+                  </h4>
+                  {editingMember && (
+                    <button
+                      type="button"
+                      onClick={handleCancelEdit}
+                      className="text-[11px] text-[#c2c6d6]/60 hover:text-white flex items-center gap-1 transition-colors"
+                    >
+                      <X size={12} /> Cancel
+                    </button>
+                  )}
+                </div>
 
-              {/* Add Member */}
-              <form onSubmit={handleAddMemberSubmit} className="space-y-3">
-                <h4 className="text-xs font-mono text-[#c2c6d6] uppercase tracking-wider flex items-center gap-2">
-                  <UserPlus size={13} /> Add New Member
-                </h4>
+                {/* Name & Role */}
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-[10px] font-mono text-[#c2c6d6]/60 uppercase tracking-widest mb-1 block">Name *</label>
                     <Input
                       required
-                      value={newMemberName}
-                      onChange={(e) => setNewMemberName(e.target.value)}
+                      value={memberName}
+                      onChange={(e) => setMemberName(e.target.value)}
                       placeholder="Full name"
                       className="bg-[#222a3d] border-white/5 text-[#dae2fd] text-sm h-8"
                     />
@@ -462,74 +750,346 @@ export default function Sidebar() {
                     <label className="text-[10px] font-mono text-[#c2c6d6]/60 uppercase tracking-widest mb-1 block">Role *</label>
                     <Input
                       required
-                      value={newMemberRole}
-                      onChange={(e) => setNewMemberRole(e.target.value)}
+                      value={memberRole}
+                      onChange={(e) => setMemberRole(e.target.value)}
                       placeholder="e.g. Backend Dev"
                       className="bg-[#222a3d] border-white/5 text-[#dae2fd] text-sm h-8"
                     />
                   </div>
                 </div>
-                <Input
-                  value={newMemberAvatar}
-                  onChange={(e) => setNewMemberAvatar(e.target.value)}
-                  placeholder="Avatar URL (optional)"
-                  className="bg-[#222a3d] border-white/5 text-[#dae2fd] text-sm h-8"
-                />
-                {addMemberError && (
+
+                {/* Avatar upload from device */}
+                <div>
+                  <label className="text-[10px] font-mono text-[#c2c6d6]/60 uppercase tracking-widest mb-1 block">
+                    Member Photo / Avatar
+                  </label>
+                  <div className="flex items-center gap-3 p-3 rounded-2xl bg-[#222a3d]/50 border border-white/5">
+                    <div className="relative w-14 h-14 flex-shrink-0">
+                      <Avatar className="w-14 h-14 rounded-2xl border-2 border-white/10 shadow-md">
+                        <AvatarImage src={avatarPreview || memberAvatarUrl || ''} alt="Avatar" />
+                        <AvatarFallback className="bg-theme-accent-10 text-theme-accent text-sm font-bold rounded-2xl">
+                          {memberName ? getInitials(memberName) : '?'}
+                        </AvatarFallback>
+                      </Avatar>
+                      {(avatarPreview || memberAvatarUrl) && (
+                        <button
+                          type="button"
+                          onClick={handleRemoveAvatar}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center hover:bg-red-600 transition-all shadow z-10"
+                          title="Remove image"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <input
+                        ref={memberFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleAvatarFileChange}
+                        className="hidden"
+                        id="member-avatar-upload"
+                      />
+                      <label
+                        htmlFor="member-avatar-upload"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#171f33] hover:bg-[#20293d] border border-white/10 text-xs text-[#dae2fd] cursor-pointer transition-all shadow-sm"
+                      >
+                        <Upload size={13} className="text-theme-accent" />
+                        <span>{avatarFile ? 'Change Image from Device' : 'Upload from Device'}</span>
+                      </label>
+                      <p className="text-[10px] text-[#c2c6d6]/50 mt-1 truncate">
+                        {avatarFile ? avatarFile.name : 'Choose a JPG, PNG, or WebP file from your computer'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {memberError && (
                   <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-1.5">
-                    ❌ {addMemberError}
+                    ❌ {memberError}
                   </p>
                 )}
-                {addMemberSuccess && (
+                {memberSuccess && (
                   <p className="text-xs text-[#4edea3] bg-[#4edea3]/10 border border-[#4edea3]/20 rounded-lg px-3 py-1.5">
-                    ✅ Member added!
+                    ✅ {memberSuccess}
                   </p>
                 )}
                 <button
                   type="submit"
-                  disabled={isSavingMember || addMemberSuccess}
-                  className="w-full py-2 rounded-lg bg-theme-btn text-white font-semibold text-sm transition-all disabled:opacity-60"
+                  disabled={isSavingMember || Boolean(memberSuccess)}
+                  className="w-full py-2 rounded-lg bg-theme-btn text-white font-semibold text-sm transition-all disabled:opacity-60 flex items-center justify-center gap-2"
                 >
-                  {isSavingMember ? 'Adding...' : addMemberSuccess ? '✓ Added!' : 'Add Member'}
+                  {isSavingMember ? (
+                    <>
+                      <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>{editingMember ? 'Saving Changes...' : 'Adding Member...'}</span>
+                    </>
+                  ) : memberSuccess ? (
+                    '✓ Saved!'
+                  ) : editingMember ? (
+                    'Save Changes'
+                  ) : (
+                    'Add Member'
+                  )}
                 </button>
               </form>
 
               {/* Divider */}
               <div className="h-px bg-white/5" />
 
-              {/* Members list with delete */}
+              {/* Members list with Edit and Delete */}
               <div>
                 <h4 className="text-xs font-mono text-[#c2c6d6] uppercase tracking-wider flex items-center gap-2 mb-3">
-                  <Trash2 size={13} /> Remove Member
+                  <Users size={13} /> Manage Members ({profiles.length})
                 </h4>
                 <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                  {profiles.map((p) => (
-                    <div key={p.id} className="flex items-center gap-3 p-2 rounded-lg bg-[#222a3d]/40 border border-white/5">
-                      <Avatar className="w-8 h-8 flex-shrink-0">
-                        <AvatarImage src={p.avatar_url || ''} alt={p.name} />
-                        <AvatarFallback className="bg-theme-accent-10 text-theme-accent text-xs font-bold">
-                          {getInitials(p.name)}
+                  {profiles.map((p) => {
+                    const isBeingEdited = editingMember?.id === p.id
+                    return (
+                      <div
+                        key={p.id}
+                        className={`flex items-center gap-3 p-2 rounded-lg border transition-all ${
+                          isBeingEdited
+                            ? 'bg-theme-accent-10 border-theme-accent/40'
+                            : 'bg-[#222a3d]/40 border-white/5'
+                        }`}
+                      >
+                        <Avatar className="w-8 h-8 flex-shrink-0">
+                          <AvatarImage src={p.avatar_url || ''} alt={p.name} />
+                          <AvatarFallback className="bg-theme-accent-10 text-theme-accent text-xs font-bold">
+                            {getInitials(p.name)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-[#dae2fd] truncate">{p.name}</p>
+                          <p className="text-xs text-[#c2c6d6]/50 truncate">{p.role}</p>
+                        </div>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleStartEditMember(p)}
+                            title="Edit member"
+                            className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all ${
+                              isBeingEdited
+                                ? 'text-theme-accent bg-theme-accent/20'
+                                : 'text-[#c2c6d6]/50 hover:text-theme-accent hover:bg-white/5'
+                            }`}
+                          >
+                            <Pencil size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteMember(p.id)}
+                            disabled={deletingMemberId === p.id}
+                            title="Delete member"
+                            className="w-7 h-7 flex items-center justify-center rounded-lg text-[#c2c6d6]/40 hover:text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-40"
+                          >
+                            {deletingMemberId === p.id ? (
+                              <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin block" />
+                            ) : (
+                              <Trash2 size={13} />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-1">
+                <button
+                  onClick={() => {
+                    handleCancelEdit()
+                    setSettingsMode('select')
+                  }}
+                  className="px-4 py-2 bg-[#222a3d] hover:bg-[#2d3449] rounded-lg text-sm transition-all"
+                >
+                  Back
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── MANAGE ROOMS ── */}
+          {settingsMode === 'manage-rooms' && (
+            <div className="py-2 space-y-5">
+              {/* Add Room Form */}
+              <form onSubmit={handleAddRoomSubmit} className="space-y-3">
+                <h4 className="text-xs font-mono text-[#c2c6d6] uppercase tracking-wider flex items-center gap-2">
+                  <MessagesSquare size={13} /> Add New Room
+                </h4>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] font-mono text-[#c2c6d6]/60 uppercase tracking-widest mb-1 block">Room Name *</label>
+                    <Input
+                      required
+                      value={newRoomName}
+                      onChange={(e) => setNewRoomName(e.target.value)}
+                      placeholder="e.g. Frontend Squad"
+                      className="bg-[#222a3d] border-white/5 text-[#dae2fd] text-sm h-8"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-mono text-[#c2c6d6]/60 uppercase tracking-widest mb-1 block">Access Code *</label>
+                    <Input
+                      required
+                      value={newRoomCode}
+                      onChange={(e) => setNewRoomCode(e.target.value)}
+                      placeholder="e.g. FE2024"
+                      className="bg-[#222a3d] border-white/5 text-[#dae2fd] text-sm h-8 font-mono"
+                    />
+                  </div>
+                </div>
+
+                {/* Room Image from device or URL */}
+                <div>
+                  <label className="text-[10px] font-mono text-[#c2c6d6]/60 uppercase tracking-widest mb-1 block">
+                    Room Image / Icon
+                  </label>
+                  <div className="flex items-center gap-3 p-3 rounded-2xl bg-[#222a3d]/50 border border-white/5">
+                    <div className="relative w-14 h-14 flex-shrink-0">
+                      <Avatar className="w-14 h-14 rounded-2xl border-2 border-white/10 shadow-md">
+                        <AvatarImage src={roomImagePreview || newRoomImage || ''} alt="Room" />
+                        <AvatarFallback className="bg-theme-accent-10 text-theme-accent text-sm font-bold rounded-2xl">
+                          {newRoomName ? newRoomName.slice(0, 2).toUpperCase() : '#'}
                         </AvatarFallback>
                       </Avatar>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-[#dae2fd] truncate">{p.name}</p>
-                        <p className="text-xs text-[#c2c6d6]/50 truncate">{p.role}</p>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteMember(p.id)}
-                        disabled={deletingMemberId === p.id}
-                        title="Delete member"
-                        className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-[#c2c6d6]/40 hover:text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-40"
-                      >
-                        {deletingMemberId === p.id ? (
-                          <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin block" />
-                        ) : (
-                          <Trash2 size={14} />
-                        )}
-                      </button>
+                      {(roomImagePreview || newRoomImage) && (
+                        <button
+                          type="button"
+                          onClick={handleRemoveRoomImage}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center hover:bg-red-600 transition-all shadow z-10"
+                          title="Remove image"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
                     </div>
-                  ))}
+
+                    <div className="flex-1 min-w-0">
+                      <input
+                        ref={roomFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleRoomImageChange}
+                        className="hidden"
+                        id="room-image-upload"
+                      />
+                      <label
+                        htmlFor="room-image-upload"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#171f33] hover:bg-[#20293d] border border-white/10 text-xs text-[#dae2fd] cursor-pointer transition-all shadow-sm"
+                      >
+                        <Upload size={13} className="text-theme-accent" />
+                        <span>{roomImageFile ? 'Change Image from Device' : 'Upload from Device'}</span>
+                      </label>
+                      <p className="text-[10px] text-[#c2c6d6]/50 mt-1 truncate">
+                        {roomImageFile ? roomImageFile.name : 'PNG, JPG, or WebP image for the room'}
+                      </p>
+                    </div>
+                  </div>
                 </div>
+
+                <div>
+                  <label className="text-[10px] font-mono text-[#c2c6d6]/60 uppercase tracking-widest mb-1 block">Description (optional)</label>
+                  <Input
+                    value={newRoomDescription}
+                    onChange={(e) => setNewRoomDescription(e.target.value)}
+                    placeholder="e.g. General chat for discussions and updates"
+                    className="bg-[#222a3d] border-white/5 text-[#dae2fd] text-sm h-8"
+                  />
+                </div>
+
+                {addRoomError && (
+                  <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-1.5">
+                    ❌ {addRoomError}
+                  </p>
+                )}
+                {addRoomSuccess && (
+                  <p className="text-xs text-[#4edea3] bg-[#4edea3]/10 border border-[#4edea3]/20 rounded-lg px-3 py-1.5">
+                    ✅ Room created successfully!
+                  </p>
+                )}
+                <button
+                  type="submit"
+                  disabled={isSavingRoom || addRoomSuccess}
+                  className="w-full py-2 rounded-lg bg-theme-btn text-white font-semibold text-sm transition-all disabled:opacity-60 flex items-center justify-center gap-2"
+                >
+                  {isSavingRoom ? (
+                    <>
+                      <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Creating Room...</span>
+                    </>
+                  ) : addRoomSuccess ? (
+                    '✓ Created!'
+                  ) : (
+                    'Create Room'
+                  )}
+                </button>
+              </form>
+
+              {/* Divider */}
+              <div className="h-px bg-white/5" />
+
+              {/* Existing Rooms List */}
+              <div>
+                <h4 className="text-xs font-mono text-[#c2c6d6] uppercase tracking-wider flex items-center justify-between mb-3">
+                  <span className="flex items-center gap-2">
+                    <Hash size={13} /> Existing Rooms ({roomsList.length})
+                  </span>
+                </h4>
+                {roomsList.length === 0 ? (
+                  <p className="text-xs text-[#c2c6d6]/40 italic py-2 text-center">No rooms created yet.</p>
+                ) : (
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {roomsList.map((room) => (
+                      <div key={room.id} className="flex items-center gap-3 p-2 rounded-lg bg-[#222a3d]/40 border border-white/5">
+                        <Avatar className="w-8 h-8 rounded-lg flex-shrink-0">
+                          <AvatarImage src={room.image_url || ''} alt={room.name} />
+                          <AvatarFallback className="bg-theme-accent-10 text-theme-accent text-xs font-bold rounded-lg">
+                            {room.name.slice(0, 2).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium text-[#dae2fd] truncate">{room.name}</p>
+                            <button
+                              type="button"
+                              onClick={() => handleCopyCode(room.id, room.code)}
+                              title="Copy Room Code"
+                              className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 text-[10px] font-mono text-theme-accent flex items-center gap-1 transition-all"
+                            >
+                              <Key size={10} />
+                              <span>{room.code}</span>
+                              {copiedCodeId === room.id ? (
+                                <CheckCheck size={10} className="text-[#4edea3]" />
+                              ) : (
+                                <Copy size={10} className="opacity-60" />
+                              )}
+                            </button>
+                          </div>
+                          {room.description && (
+                            <p className="text-xs text-[#c2c6d6]/50 truncate">{room.description}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => handleDeleteRoom(room.id)}
+                          disabled={deletingRoomId === room.id}
+                          title="Delete room"
+                          className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-[#c2c6d6]/40 hover:text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-40"
+                        >
+                          {deletingRoomId === room.id ? (
+                            <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin block" />
+                          ) : (
+                            <Trash2 size={14} />
+                          )}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end pt-1">

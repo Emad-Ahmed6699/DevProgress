@@ -75,3 +75,30 @@ export interface ResourceLike {
   profile_id: string
   created_at: string
 }
+
+export interface Room {
+  id: string
+  name: string
+  code: string
+  image_url: string | null
+  description: string | null
+  created_by: string | null
+  created_at: string
+}
+
+export interface RoomMember {
+  id: string
+  room_id: string
+  profile_id: string
+  joined_at: string
+  profile?: Profile
+}
+
+export interface RoomMessage {
+  id: string
+  room_id: string
+  sender_id: string
+  content: string
+  created_at: string
+  sender?: Profile
+}
