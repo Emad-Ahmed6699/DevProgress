@@ -35,7 +35,8 @@ import {
   ExternalLink,
   X,
   ZoomIn,
-  ArrowLeft
+  ArrowLeft,
+  Camera
 } from 'lucide-react'
 
 // Color generator for WhatsApp-like sender names
@@ -125,6 +126,34 @@ export default function RoomsPage() {
     imageUrl: string | null
     initials?: string
   } | null>(null)
+
+  // Photo upload in chat state
+  const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null)
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      alert('Please select a valid image file.')
+      return
+    }
+    setSelectedImageFile(file)
+    const preview = URL.createObjectURL(file)
+    setImagePreviewUrl(preview)
+  }
+
+  const handleClearImage = () => {
+    setSelectedImageFile(null)
+    if (imagePreviewUrl) {
+      URL.revokeObjectURL(imagePreviewUrl)
+      setImagePreviewUrl(null)
+    }
+    if (imageInputRef.current) {
+      imageInputRef.current.value = ''
+    }
+  }
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -295,10 +324,15 @@ export default function RoomsPage() {
   /* ──────────────── Send Message ──────────────── */
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
-    if (!newMessage.trim() || !activeRoomId || !activeProfile || isSending) return
+    if ((!newMessage.trim() && !selectedImageFile) || !activeRoomId || !activeProfile || isSending) return
 
     const content = newMessage.trim()
+    const currentImageFile = selectedImageFile
+    const currentPreviewUrl = imagePreviewUrl
+
+    // Clear inputs immediately
     setNewMessage('')
+    handleClearImage()
     setIsSending(true)
 
     // Optimistic message
@@ -308,39 +342,74 @@ export default function RoomsPage() {
       room_id: activeRoomId,
       sender_id: activeProfile.id,
       content,
+      image_url: currentPreviewUrl,
       created_at: new Date().toISOString(),
       sender: activeProfile
     }
     setMessages((prev) => [...prev, optimisticMsg])
     setTimeout(() => scrollToBottom(true), 50)
 
-    const { data, error } = await supabase
-      .from('room_messages')
-      .insert({
-        room_id: activeRoomId,
-        sender_id: activeProfile.id,
-        content
-      })
-      .select('*, sender:sender_id(*)')
-      .single()
+    try {
+      let uploadedImageUrl: string | null = null
 
-    if (error) {
-      console.error('Failed to send message:', error)
-      // Remove optimistic message if failed
-      setMessages((prev) => prev.filter((m) => m.id !== tempId))
-    } else if (data) {
-      // Replace optimistic with real
-      setMessages((prev) => prev.map((m) => (m.id === tempId ? data : m)))
-      setRoomLastMessages((prev) => ({
-        ...prev,
-        [activeRoomId]: {
-          content,
-          time: formatMessageTime(data.created_at),
-          senderName: activeProfile.name
+      // Upload image to Supabase if attached
+      if (currentImageFile) {
+        const fileExt = currentImageFile.name.split('.').pop() || 'png'
+        const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}.${fileExt}`
+        const filePath = `chat/${activeRoomId}/${fileName}`
+
+        let { data: uploadData, error: uploadErr } = await supabase.storage
+          .from('chat-images')
+          .upload(filePath, currentImageFile)
+
+        if (uploadErr) {
+          // Fallback to avatars bucket
+          const fallback = await supabase.storage
+            .from('avatars')
+            .upload(filePath, currentImageFile)
+          uploadData = fallback.data
+          uploadErr = fallback.error
         }
-      }))
+
+        if (uploadData) {
+          const { data: urlData } = supabase.storage
+            .from(uploadErr ? 'avatars' : 'chat-images')
+            .getPublicUrl(uploadData.path)
+          uploadedImageUrl = urlData.publicUrl
+        }
+      }
+
+      const { data, error } = await supabase
+        .from('room_messages')
+        .insert({
+          room_id: activeRoomId,
+          sender_id: activeProfile.id,
+          content,
+          image_url: uploadedImageUrl
+        })
+        .select('*, sender:sender_id(*)')
+        .single()
+
+      if (error) {
+        console.error('Failed to send message:', error)
+        setMessages((prev) => prev.filter((m) => m.id !== tempId))
+      } else if (data) {
+        setMessages((prev) => prev.map((m) => (m.id === tempId ? data : m)))
+        setRoomLastMessages((prev) => ({
+          ...prev,
+          [activeRoomId]: {
+            content: content || '📷 Photo',
+            time: formatMessageTime(data.created_at),
+            senderName: activeProfile.name
+          }
+        }))
+      }
+    } catch (err) {
+      console.error('Failed to send message:', err)
+      setMessages((prev) => prev.filter((m) => m.id !== tempId))
+    } finally {
+      setIsSending(false)
     }
-    setIsSending(false)
   }
 
   /* ──────────────── Join with Room Code (Direct on Locked Room) ──────────────── */
@@ -886,7 +955,7 @@ export default function RoomsPage() {
 
                           {/* Bubble */}
                           <div
-                            className={`max-w-[78%] md:max-w-[65%] rounded-2xl px-4 py-2.5 shadow-md relative group transition-all ${
+                            className={`max-w-[85%] sm:max-w-[75%] md:max-w-[65%] rounded-2xl p-2 shadow-md relative group transition-all ${
                               isMe
                                 ? 'bg-gradient-to-r from-theme-accent-10 to-theme-accent-20 border border-theme-accent/40 text-white rounded-br-none'
                                 : 'bg-[#1e293b]/90 border border-white/10 text-[#dae2fd] rounded-bl-none'
@@ -894,21 +963,49 @@ export default function RoomsPage() {
                           >
                             {/* Sender Name in Group Chat */}
                             {!isMe && (
-                              <p className={`text-[11px] font-bold mb-1 ${getSenderColor(senderName)}`}>
+                              <p className={`text-[11px] font-bold px-2 pt-1 mb-1 ${getSenderColor(senderName)}`}>
                                 {senderName}
                               </p>
                             )}
 
+                            {/* Image if present */}
+                            {msg.image_url && (
+                              <div
+                                onClick={() =>
+                                  setPreviewPhoto({
+                                    isOpen: true,
+                                    title: senderName,
+                                    subtitle: formatMessageTime(msg.created_at),
+                                    imageUrl: msg.image_url || null,
+                                    initials: getInitials(senderName)
+                                  })
+                                }
+                                className="relative rounded-xl overflow-hidden cursor-pointer group/img mb-1 bg-black/30"
+                              >
+                                <img
+                                  src={msg.image_url}
+                                  alt="Shared photo"
+                                  className="w-full max-h-72 object-cover rounded-xl group-hover/img:scale-[1.01] transition-transform duration-200"
+                                />
+                                <div className="absolute inset-0 bg-black/30 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center text-white gap-1.5 text-xs font-semibold">
+                                  <ZoomIn size={16} />
+                                  <span>View Photo</span>
+                                </div>
+                              </div>
+                            )}
+
                             {/* Message Content */}
-                            <p
-                              dir="auto"
-                              className="text-sm leading-relaxed whitespace-pre-wrap break-words text-start"
-                            >
-                              {msg.content}
-                            </p>
+                            {msg.content && (
+                              <p
+                                dir="auto"
+                                className="text-sm leading-relaxed whitespace-pre-wrap break-words px-2 py-0.5 text-start"
+                              >
+                                {msg.content}
+                              </p>
+                            )}
 
                             {/* Time & Double Checkmark */}
-                            <div className="flex items-center justify-end gap-1 mt-1 text-[10px] text-[#c2c6d6]/60">
+                            <div className="flex items-center justify-end gap-1 px-2 pb-0.5 mt-0.5 text-[10px] text-[#c2c6d6]/60">
                               <span>{formatMessageTime(msg.created_at)}</span>
                               {isMe && (
                                 <CheckCheck size={13} className="text-theme-accent stroke-[2.5]" />
@@ -938,11 +1035,65 @@ export default function RoomsPage() {
                 ))}
               </div>
 
+              {/* Image Preview Banner if photo attached */}
+              {imagePreviewUrl && (
+                <div className="p-3 bg-[#131c2e] border-t border-white/10 flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2 duration-150">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="relative w-14 h-14 rounded-xl overflow-hidden border border-white/20 bg-black/40 flex-shrink-0">
+                      <img
+                        src={imagePreviewUrl}
+                        alt="Upload preview"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-[#dae2fd] truncate">
+                        {selectedImageFile?.name || 'Photo attached'}
+                      </p>
+                      <p className="text-[10px] text-[#4edea3] font-mono">
+                        Ready to send • Add optional caption below
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleClearImage}
+                    className="p-1.5 rounded-lg text-[#c2c6d6] hover:text-red-400 hover:bg-white/5 transition-colors"
+                    title="Remove attached photo"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              )}
+
               {/* Message Input Bar (WhatsApp style) */}
               <form
                 onSubmit={handleSendMessage}
-                className="p-3 bg-[#171f33] border-t border-white/10 flex items-center gap-3 flex-shrink-0"
+                className="p-3 bg-[#171f33] border-t border-white/10 flex items-center gap-2 sm:gap-3 flex-shrink-0"
               >
+                {/* Hidden File Input */}
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageSelect}
+                  className="hidden"
+                />
+
+                {/* Attach Photo Button */}
+                <button
+                  type="button"
+                  onClick={() => imageInputRef.current?.click()}
+                  className={`w-11 h-11 rounded-xl flex items-center justify-center transition-all flex-shrink-0 border ${
+                    selectedImageFile
+                      ? 'bg-theme-accent-10 text-theme-accent border-theme-accent/50'
+                      : 'bg-[#222a3d] text-[#c2c6d6] hover:text-white border-white/10 hover:bg-white/5'
+                  }`}
+                  title="Attach Photo"
+                >
+                  <Camera size={18} />
+                </button>
+
                 <div className="relative flex-1">
                   <Input
                     dir="auto"
@@ -954,18 +1105,26 @@ export default function RoomsPage() {
                         handleSendMessage()
                       }
                     }}
-                    placeholder={`Type a message as ${activeProfile?.name || 'Member'}...`}
+                    placeholder={
+                      selectedImageFile
+                        ? 'Add a caption (optional)...'
+                        : `Type a message as ${activeProfile?.name || 'Member'}...`
+                    }
                     className="bg-[#222a3d] border-white/10 text-sm text-[#dae2fd] placeholder:text-[#c2c6d6]/30 h-11 px-4 rounded-xl focus:ring-2 focus:ring-theme-accent/50"
                   />
                 </div>
 
                 <button
                   type="submit"
-                  disabled={!newMessage.trim() || isSending}
+                  disabled={(!newMessage.trim() && !selectedImageFile) || isSending}
                   className="w-11 h-11 rounded-xl bg-theme-btn text-white flex items-center justify-center hover:opacity-90 transition-all disabled:opacity-40 flex-shrink-0 shadow-md"
                   title="Send message"
                 >
-                  <Send size={16} />
+                  {isSending ? (
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Send size={16} />
+                  )}
                 </button>
               </form>
 

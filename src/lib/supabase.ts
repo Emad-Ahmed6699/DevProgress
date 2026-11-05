@@ -99,6 +99,7 @@ export interface RoomMessage {
   room_id: string
   sender_id: string
   content: string
+  image_url?: string | null
   created_at: string
   sender?: Profile
 }
