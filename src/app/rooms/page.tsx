@@ -18,12 +18,6 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import {
   MessagesSquare,
   Send,
   Lock,
@@ -44,8 +38,7 @@ import {
   ArrowLeft,
   Camera,
   Pencil,
-  Trash2,
-  MoreVertical
+  Trash2
 } from 'lucide-react'
 
 // Color generator for WhatsApp-like sender names
@@ -97,6 +90,7 @@ function formatMessageDate(dateStr: string) {
 }
 
 const QUICK_EMOJIS = ['👍', '❤️', '🔥', '😂', '🚀', '🎉', '💻', '👏']
+const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏']
 
 export default function RoomsPage() {
   const { activeProfile } = useProfile()
@@ -141,41 +135,6 @@ export default function RoomsPage() {
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
 
-  // Edit & Delete message state
-  const [editingMessage, setEditingMessage] = useState<RoomMessage | null>(null)
-
-  const handleStartEdit = (msg: RoomMessage) => {
-    setEditingMessage(msg)
-    setNewMessage(msg.content || '')
-    // Focus input
-    setTimeout(() => {
-      const inputEl = document.getElementById('chat-input')
-      inputEl?.focus()
-    }, 50)
-  }
-
-  const handleCancelEdit = () => {
-    setEditingMessage(null)
-    setNewMessage('')
-  }
-
-  const handleDeleteMessage = async (msgId: string) => {
-    if (!confirm('Are you sure you want to delete this message?')) return
-
-    // Optimistically remove from UI
-    setMessages((prev) => prev.filter((m) => m.id !== msgId))
-
-    const { error } = await supabase
-      .from('room_messages')
-      .delete()
-      .eq('id', msgId)
-
-    if (error) {
-      console.error('Failed to delete message:', error)
-      if (activeRoomId) fetchActiveRoomData(activeRoomId)
-    }
-  }
-
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -199,15 +158,160 @@ export default function RoomsPage() {
     }
   }
 
+  // Edit message state
+  const [editingMessage, setEditingMessage] = useState<RoomMessage | null>(null)
+  const [preEditText, setPreEditText] = useState('')
+  const messageInputRef = useRef<HTMLInputElement>(null)
+
+  const startEditingMessage = (msg: RoomMessage) => {
+    setEditingMessage(msg)
+    setPreEditText(newMessage)
+    setNewMessage(msg.content || '')
+    setTimeout(() => {
+      messageInputRef.current?.focus()
+    }, 50)
+  }
+
+  const cancelEditingMessage = useCallback(() => {
+    setEditingMessage(null)
+    setNewMessage(preEditText)
+    setPreEditText('')
+  }, [preEditText])
+
+  const handleDeleteMessage = async (msgId: string) => {
+    if (!confirm('Are you sure you want to delete this message?')) return
+
+    // Optimistic removal
+    setMessages((prev) => prev.filter((m) => m.id !== msgId))
+
+    const { error } = await supabase
+      .from('room_messages')
+      .delete()
+      .eq('id', msgId)
+
+    if (error) {
+      console.error('Failed to delete message:', error)
+      alert('Failed to delete message: ' + error.message)
+      if (activeRoomId) fetchActiveRoomData(activeRoomId)
+    }
+  }
+
+  // Active message popup menu (WhatsApp style: long press on mobile, click on laptop)
+  const [activeMenuMessageId, setActiveMenuMessageId] = useState<string | null>(null)
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const touchMovedRef = useRef<boolean>(false)
+
+  const handleTouchStart = (msgId: string) => {
+    touchMovedRef.current = false
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current)
+    longPressTimerRef.current = setTimeout(() => {
+      if (!touchMovedRef.current) {
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+          try {
+            navigator.vibrate(40)
+          } catch {}
+        }
+        setActiveMenuMessageId(msgId)
+      }
+    }, 450)
+  }
+
+  const handleTouchMove = () => {
+    touchMovedRef.current = true
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }
+
+  const handleTouchEnd = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }
+
+  const handleBubbleClick = (e: React.MouseEvent, msgId: string) => {
+    const target = e.target as HTMLElement
+    if (target.closest('button') || target.closest('[data-photo-preview]')) {
+      return
+    }
+    setActiveMenuMessageId((prev) => (prev === msgId ? null : msgId))
+  }
+
+  const handleContextMenu = (e: React.MouseEvent, msgId: string) => {
+    e.preventDefault()
+    setActiveMenuMessageId(msgId)
+  }
+
+  const hasReacted = (msg: RoomMessage, emoji: string) => {
+    if (!activeProfile?.id || !msg.reactions) return false
+    const userIds = msg.reactions[emoji] || []
+    return userIds.includes(activeProfile.id)
+  }
+
+  const handleToggleReaction = async (msgId: string, emoji: string) => {
+    if (!activeProfile?.id) return
+    const userId = activeProfile.id
+
+    const msg = messages.find((m) => m.id === msgId)
+    if (!msg) return
+
+    const currentReactions: Record<string, string[]> = {}
+    if (msg.reactions) {
+      Object.entries(msg.reactions).forEach(([eKey, uList]) => {
+        if (Array.isArray(uList)) {
+          currentReactions[eKey] = [...uList]
+        }
+      })
+    }
+
+    const userList = currentReactions[emoji] || []
+    const alreadyReacted = userList.includes(userId)
+
+    // In WhatsApp, reacting with emoji toggles it or replaces previous reaction
+    Object.keys(currentReactions).forEach((key) => {
+      currentReactions[key] = currentReactions[key].filter((id) => id !== userId)
+      if (currentReactions[key].length === 0) {
+        delete currentReactions[key]
+      }
+    })
+
+    if (!alreadyReacted) {
+      currentReactions[emoji] = [...(currentReactions[emoji] || []), userId]
+    }
+
+    // Optimistic UI update
+    setMessages((prev) =>
+      prev.map((m) => (m.id === msgId ? { ...m, reactions: currentReactions } : m))
+    )
+
+    const { error } = await supabase
+      .from('room_messages')
+      .update({ reactions: currentReactions })
+      .eq('id', msgId)
+
+    if (error) {
+      console.error('Failed to update reactions:', error)
+      if (activeRoomId) fetchActiveRoomData(activeRoomId)
+    }
+  }
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setPreviewPhoto(null)
+        if (activeMenuMessageId) {
+          setActiveMenuMessageId(null)
+        } else if (previewPhoto) {
+          setPreviewPhoto(null)
+        } else if (editingMessage) {
+          cancelEditingMessage()
+        }
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [previewPhoto, editingMessage, cancelEditingMessage, activeMenuMessageId])
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -308,7 +412,7 @@ export default function RoomsPage() {
 
     fetchActiveRoomData(activeRoomId)
 
-    // Supabase Realtime subscription for messages in this room (INSERT, UPDATE, DELETE)
+    // Supabase Realtime subscription for messages in this room
     const channel = supabase
       .channel(`room_chat_${activeRoomId}`)
       .on(
@@ -344,7 +448,7 @@ export default function RoomsPage() {
             setRoomLastMessages((prev) => ({
               ...prev,
               [activeRoomId]: {
-                content: newMsg.content,
+                content: newMsg.content || (newMsg.image_url ? '📷 Photo' : ''),
                 time: formatMessageTime(newMsg.created_at),
                 senderName: senderProfile?.name || 'Someone'
               }
@@ -352,19 +456,13 @@ export default function RoomsPage() {
 
             setTimeout(() => scrollToBottom(true), 50)
           } else if (payload.eventType === 'UPDATE') {
-            const updatedMsg = payload.new as RoomMessage
+            const updated = payload.new as RoomMessage
             setMessages((prev) =>
-              prev.map((m) =>
-                m.id === updatedMsg.id
-                  ? { ...m, content: updatedMsg.content, is_edited: updatedMsg.is_edited }
-                  : m
-              )
+              prev.map((m) => (m.id === updated.id ? { ...m, ...updated, sender: m.sender } : m))
             )
           } else if (payload.eventType === 'DELETE') {
-            const oldId = (payload.old as { id?: string })?.id
-            if (oldId) {
-              setMessages((prev) => prev.filter((m) => m.id !== oldId))
-            }
+            const deleted = payload.old as { id: string }
+            setMessages((prev) => prev.filter((m) => m.id !== deleted.id))
           }
         }
       )
@@ -385,40 +483,40 @@ export default function RoomsPage() {
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
     if (!activeRoomId || !activeProfile || isSending) return
-    if (!newMessage.trim() && !selectedImageFile) return
 
-    // If editing an existing message
+    // If editing existing message
     if (editingMessage) {
+      if (!newMessage.trim()) return
       const updatedText = newMessage.trim()
-      const targetId = editingMessage.id
-      setEditingMessage(null)
-      setNewMessage('')
+      const editingId = editingMessage.id
 
       // Optimistic update
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === targetId ? { ...m, content: updatedText, is_edited: true } : m
+          m.id === editingId ? { ...m, content: updatedText, is_edited: true } : m
         )
       )
+      setEditingMessage(null)
+      setNewMessage('')
+      setPreEditText('')
 
-      try {
-        const { error } = await supabase
-          .from('room_messages')
-          .update({
-            content: updatedText,
-            is_edited: true
-          })
-          .eq('id', targetId)
+      const { error } = await supabase
+        .from('room_messages')
+        .update({
+          content: updatedText,
+          is_edited: true
+        })
+        .eq('id', editingId)
 
-        if (error) {
-          console.error('Failed to update message:', error)
-          if (activeRoomId) fetchActiveRoomData(activeRoomId)
-        }
-      } catch (err) {
-        console.error('Failed to update message:', err)
+      if (error) {
+        console.error('Failed to update message:', error)
+        alert('Failed to update message: ' + error.message)
+        if (activeRoomId) fetchActiveRoomData(activeRoomId)
       }
       return
     }
+
+    if (!newMessage.trim() && !selectedImageFile) return
 
     const content = newMessage.trim()
     const currentImageFile = selectedImageFile
@@ -1021,7 +1119,48 @@ export default function RoomsPage() {
                         )}
 
                         {/* Message Bubble Container */}
-                        <div className={`flex items-end gap-2 ${isMe ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`flex items-end gap-1.5 sm:gap-2 ${isMe ? 'justify-end' : 'justify-start'} group/row relative`}>
+                          {/* Desktop Hover Quick Actions (Reaction trigger + Edit/Delete for author) */}
+                          <div
+                            className={`hidden sm:flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity mb-1 bg-[#131c2e]/90 backdrop-blur-sm border border-white/10 rounded-xl p-0.5 shadow-sm ${
+                              isMe ? 'order-first' : 'order-last'
+                            }`}
+                          >
+                            {/* Emoji reaction button */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setActiveMenuMessageId((prev) => (prev === msg.id ? null : msg.id))
+                              }}
+                              className="w-7 h-7 rounded-lg hover:bg-white/10 text-[#c2c6d6] hover:text-white flex items-center justify-center transition-colors"
+                              title="React with emoji"
+                            >
+                              <Smile size={14} />
+                            </button>
+
+                            {isMe && msg.content && (
+                              <button
+                                type="button"
+                                onClick={() => startEditingMessage(msg)}
+                                className="w-7 h-7 rounded-lg hover:bg-theme-accent-10 text-[#c2c6d6] hover:text-theme-accent flex items-center justify-center transition-colors"
+                                title="Edit message"
+                              >
+                                <Pencil size={13} />
+                              </button>
+                            )}
+                            {isMe && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteMessage(msg.id)}
+                                className="w-7 h-7 rounded-lg hover:bg-rose-500/20 text-[#c2c6d6] hover:text-rose-400 flex items-center justify-center transition-colors"
+                                title="Delete message"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            )}
+                          </div>
+
                           {/* Sender Avatar for others */}
                           {!isMe && (
                             <button
@@ -1047,102 +1186,182 @@ export default function RoomsPage() {
                             </button>
                           )}
 
-                          {/* Bubble */}
-                          <div
-                            className={`max-w-[85%] sm:max-w-[75%] md:max-w-[65%] rounded-2xl p-2 shadow-md relative group transition-all ${
-                              isMe
-                                ? 'bg-gradient-to-r from-theme-accent-10 to-theme-accent-20 border border-theme-accent/40 text-white rounded-br-none'
-                                : 'bg-[#1e293b]/90 border border-white/10 text-[#dae2fd] rounded-bl-none'
-                            }`}
-                          >
-                            {/* Sender Name in Group Chat */}
-                            {!isMe && (
-                              <p className={`text-[11px] font-bold px-2 pt-1 mb-1 ${getSenderColor(senderName)}`}>
-                                {senderName}
-                              </p>
-                            )}
-
-                            {/* Image if present */}
-                            {msg.image_url && (
-                              <div
-                                onClick={() =>
-                                  setPreviewPhoto({
-                                    isOpen: true,
-                                    title: senderName,
-                                    subtitle: formatMessageTime(msg.created_at),
-                                    imageUrl: msg.image_url || null,
-                                    initials: getInitials(senderName)
-                                  })
-                                }
-                                className="relative rounded-xl overflow-hidden cursor-pointer group/img mb-1 bg-black/30"
-                              >
-                                <img
-                                  src={msg.image_url}
-                                  alt="Shared photo"
-                                  className="w-full max-h-72 object-cover rounded-xl group-hover/img:scale-[1.01] transition-transform duration-200"
+                          {/* Bubble Wrapper with Floating Menu anchor */}
+                          <div className="relative max-w-[85%] sm:max-w-[75%] md:max-w-[65%]">
+                            {/* Floating WhatsApp Menu (Reactions + Edit / Delete) */}
+                            {activeMenuMessageId === msg.id && (
+                              <>
+                                {/* Backdrop to close on click outside */}
+                                <div
+                                  className="fixed inset-0 z-40"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setActiveMenuMessageId(null)
+                                  }}
                                 />
-                                <div className="absolute inset-0 bg-black/30 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center text-white gap-1.5 text-xs font-semibold">
-                                  <ZoomIn size={16} />
-                                  <span>View Photo</span>
-                                </div>
-                              </div>
-                            )}
 
-                            {/* Actions Dropdown for Message Author */}
-                            {isMe && (
-                              <div className="absolute top-1.5 right-1.5 opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity z-10">
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger
-                                    aria-label="Message options"
-                                    className="w-6 h-6 rounded-lg bg-black/40 hover:bg-black/70 flex items-center justify-center text-white/80 hover:text-white transition-colors cursor-pointer"
-                                  >
-                                    <MoreVertical size={13} />
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent
-                                    align="end"
-                                    className="bg-[#171f33] border border-white/10 text-[#dae2fd] min-w-[120px] shadow-xl p-1 z-50 rounded-xl"
-                                  >
-                                    {msg.content && (
-                                      <DropdownMenuItem
-                                        onClick={() => handleStartEdit(msg)}
-                                        className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-[#dae2fd] hover:text-white hover:bg-white/10 rounded-lg cursor-pointer transition-colors"
+                                {/* WhatsApp-style Popup floating right above the bubble */}
+                                <div
+                                  className={`absolute bottom-full mb-2 z-50 flex flex-col gap-1.5 animate-in zoom-in-95 fade-in duration-150 ${
+                                    isMe ? 'right-0 items-end' : 'left-0 items-start'
+                                  }`}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {/* Famous Emojis Reaction Bar */}
+                                  <div className="bg-[#1e293b]/95 backdrop-blur-md border border-white/15 rounded-full px-2.5 py-1.5 shadow-2xl flex items-center gap-1.5">
+                                    {REACTION_EMOJIS.map((emoji) => {
+                                      const isMine = hasReacted(msg, emoji)
+                                      return (
+                                        <button
+                                          key={emoji}
+                                          type="button"
+                                          onClick={() => {
+                                            handleToggleReaction(msg.id, emoji)
+                                            setActiveMenuMessageId(null)
+                                          }}
+                                          className={`text-xl hover:scale-135 active:scale-90 transition-transform p-1 rounded-full cursor-pointer ${
+                                            isMine ? 'bg-white/20 scale-110 ring-1 ring-white/30' : 'hover:bg-white/10'
+                                          }`}
+                                          title={`React with ${emoji}`}
+                                        >
+                                          {emoji}
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+
+                                  {/* Edit & Delete Actions Menu (for author) */}
+                                  {isMe && (
+                                    <div className="bg-[#171f33]/95 backdrop-blur-md border border-white/15 rounded-2xl shadow-2xl p-1 flex flex-col gap-0.5 min-w-[140px]">
+                                      {msg.content && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setActiveMenuMessageId(null)
+                                            startEditingMessage(msg)
+                                          }}
+                                          className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-[#dae2fd] hover:text-white hover:bg-white/10 rounded-xl transition-colors text-left cursor-pointer"
+                                        >
+                                          <Pencil size={13} className="text-theme-accent" />
+                                          <span>Edit Message</span>
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setActiveMenuMessageId(null)
+                                          handleDeleteMessage(msg.id)
+                                        }}
+                                        className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-xl transition-colors text-left cursor-pointer"
                                       >
-                                        <Pencil size={13} className="text-theme-accent" />
-                                        <span>Edit</span>
-                                      </DropdownMenuItem>
-                                    )}
-                                    <DropdownMenuItem
-                                      onClick={() => handleDeleteMessage(msg.id)}
-                                      className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg cursor-pointer transition-colors"
+                                        <Trash2 size={13} />
+                                        <span>Delete Message</span>
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </>
+                            )}
+
+                            {/* Message Bubble with Long-Press on Mobile and Click on Desktop */}
+                            <div
+                              onTouchStart={() => handleTouchStart(msg.id)}
+                              onTouchMove={handleTouchMove}
+                              onTouchEnd={handleTouchEnd}
+                              onTouchCancel={handleTouchEnd}
+                              onClick={(e) => handleBubbleClick(e, msg.id)}
+                              onContextMenu={(e) => handleContextMenu(e, msg.id)}
+                              className={`rounded-2xl p-2 shadow-md relative group transition-all select-none cursor-pointer ${
+                                isMe
+                                  ? 'bg-gradient-to-r from-theme-accent-10 to-theme-accent-20 border border-theme-accent/40 text-white rounded-br-none'
+                                  : 'bg-[#1e293b]/90 border border-white/10 text-[#dae2fd] rounded-bl-none'
+                              } ${activeMenuMessageId === msg.id ? 'ring-2 ring-theme-accent shadow-xl scale-[1.01]' : ''}`}
+                            >
+                              {/* Sender Name in Group Chat */}
+                              {!isMe && (
+                                <p className={`text-[11px] font-bold px-2 pt-1 mb-1 ${getSenderColor(senderName)}`}>
+                                  {senderName}
+                                </p>
+                              )}
+
+                              {/* Image if present */}
+                              {msg.image_url && (
+                                <div
+                                  data-photo-preview
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setPreviewPhoto({
+                                      isOpen: true,
+                                      title: senderName,
+                                      subtitle: formatMessageTime(msg.created_at),
+                                      imageUrl: msg.image_url || null,
+                                      initials: getInitials(senderName)
+                                    })
+                                  }}
+                                  className="relative rounded-xl overflow-hidden cursor-pointer group/img mb-1 bg-black/30"
+                                >
+                                  <img
+                                    src={msg.image_url}
+                                    alt="Shared photo"
+                                    className="w-full max-h-72 object-cover rounded-xl group-hover/img:scale-[1.01] transition-transform duration-200"
+                                  />
+                                  <div className="absolute inset-0 bg-black/30 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center text-white gap-1.5 text-xs font-semibold">
+                                    <ZoomIn size={16} />
+                                    <span>View Photo</span>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Message Content */}
+                              {msg.content && (
+                                <p
+                                  dir="auto"
+                                  className="text-sm leading-relaxed whitespace-pre-wrap break-words px-2 py-0.5 text-start"
+                                >
+                                  {msg.content}
+                                </p>
+                              )}
+
+                              {/* Time & Double Checkmark */}
+                              <div className="flex items-center justify-end gap-1 px-2 pb-0.5 mt-0.5 text-[10px] text-[#c2c6d6]/60">
+                                {msg.is_edited && (
+                                  <span className="text-[9px] italic text-theme-accent/80 font-mono mr-0.5">edited</span>
+                                )}
+                                <span>{formatMessageTime(msg.created_at)}</span>
+                                {isMe && (
+                                  <CheckCheck size={13} className="text-theme-accent stroke-[2.5]" />
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Reactions Badges underneath the bubble */}
+                            {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                              <div className={`flex flex-wrap items-center gap-1 mt-1 ${isMe ? 'justify-end mr-1' : 'justify-start ml-1'}`}>
+                                {Object.entries(msg.reactions).map(([emoji, userIds]) => {
+                                  if (!userIds || userIds.length === 0) return null
+                                  const isMyReaction = activeProfile?.id ? userIds.includes(activeProfile.id) : false
+                                  return (
+                                    <button
+                                      key={emoji}
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleToggleReaction(msg.id, emoji)
+                                      }}
+                                      className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border shadow-sm transition-all hover:scale-110 active:scale-95 cursor-pointer ${
+                                        isMyReaction
+                                          ? 'bg-theme-accent-10 border-theme-accent/50 text-theme-accent font-semibold ring-1 ring-theme-accent/30'
+                                          : 'bg-[#151c2e] border-white/10 text-[#c2c6d6] hover:bg-white/5'
+                                      }`}
+                                      title={`${userIds.length} ${userIds.length === 1 ? 'reaction' : 'reactions'}`}
                                     >
-                                      <Trash2 size={13} />
-                                      <span>Delete</span>
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
+                                      <span className="text-sm">{emoji}</span>
+                                      {userIds.length > 1 && <span className="text-[10px] font-mono font-bold">{userIds.length}</span>}
+                                    </button>
+                                  )
+                                })}
                               </div>
                             )}
-
-                            {/* Message Content */}
-                            {msg.content && (
-                              <p
-                                dir="auto"
-                                className="text-sm leading-relaxed whitespace-pre-wrap break-words px-2 py-0.5 text-start"
-                              >
-                                {msg.content}
-                              </p>
-                            )}
-
-                            {/* Time & Double Checkmark */}
-                            <div className="flex items-center justify-end gap-1 px-2 pb-0.5 mt-0.5 text-[10px] text-[#c2c6d6]/60">
-                              {msg.is_edited && (
-                                <span className="text-[9px] italic text-[#c2c6d6]/50 mr-0.5">edited</span>
-                              )}
-                              <span>{formatMessageTime(msg.created_at)}</span>
-                              {isMe && (
-                                <CheckCheck size={13} className="text-theme-accent stroke-[2.5]" />
-                              )}
-                            </div>
                           </div>
                         </div>
                       </div>
@@ -1200,11 +1419,16 @@ export default function RoomsPage() {
 
               {/* Editing Banner */}
               {editingMessage && (
-                <div className="px-4 py-2 bg-theme-accent-10 border-t border-theme-accent/30 flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2 duration-150">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Pencil size={14} className="text-theme-accent flex-shrink-0" />
+                <div className="px-4 py-2 bg-[#131c2e] border-t-2 border-theme-accent flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2 duration-150">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-7 h-7 rounded-lg bg-theme-accent-10 flex items-center justify-center text-theme-accent flex-shrink-0 border border-theme-accent/30">
+                      <Pencil size={13} />
+                    </div>
                     <div className="min-w-0 text-xs">
-                      <p className="font-semibold text-theme-accent">Editing message</p>
+                      <p className="font-semibold text-theme-accent flex items-center gap-1.5">
+                        <span>Editing message</span>
+                        <span className="text-[10px] text-[#c2c6d6]/60 font-normal">(Enter to save, Esc to cancel)</span>
+                      </p>
                       <p className="text-[#c2c6d6]/80 truncate max-w-xs sm:max-w-md">
                         {editingMessage.content}
                       </p>
@@ -1212,11 +1436,12 @@ export default function RoomsPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={handleCancelEdit}
-                    className="p-1 rounded-lg text-[#c2c6d6] hover:text-white hover:bg-white/10 transition-colors"
-                    title="Cancel edit"
+                    onClick={cancelEditingMessage}
+                    className="p-1.5 rounded-lg text-[#c2c6d6] hover:text-white hover:bg-white/10 transition-colors flex items-center gap-1 text-xs"
+                    title="Cancel edit (Esc)"
                   >
-                    <X size={16} />
+                    <X size={15} />
+                    <span className="hidden sm:inline">Cancel</span>
                   </button>
                 </div>
               )}
@@ -1253,7 +1478,7 @@ export default function RoomsPage() {
 
                 <div className="relative flex-1">
                   <Input
-                    id="chat-input"
+                    ref={messageInputRef}
                     dir="auto"
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
@@ -1263,17 +1488,19 @@ export default function RoomsPage() {
                         handleSendMessage()
                       }
                       if (e.key === 'Escape' && editingMessage) {
-                        handleCancelEdit()
+                        cancelEditingMessage()
                       }
                     }}
                     placeholder={
                       editingMessage
-                        ? 'Edit message...'
+                        ? 'Edit message... (Enter to save, Esc to cancel)'
                         : selectedImageFile
                         ? 'Add a caption (optional)...'
                         : `Type a message as ${activeProfile?.name || 'Member'}...`
                     }
-                    className="bg-[#222a3d] border-white/10 text-sm text-[#dae2fd] placeholder:text-[#c2c6d6]/30 h-11 px-4 rounded-xl focus:ring-2 focus:ring-theme-accent/50"
+                    className={`bg-[#222a3d] border-white/10 text-sm text-[#dae2fd] placeholder:text-[#c2c6d6]/30 h-11 px-4 rounded-xl focus:ring-2 focus:ring-theme-accent/50 ${
+                      editingMessage ? 'border-theme-accent/50 bg-theme-accent-10/10' : ''
+                    }`}
                   />
                 </div>
 

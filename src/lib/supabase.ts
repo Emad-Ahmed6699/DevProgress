@@ -101,6 +101,7 @@ export interface RoomMessage {
   content: string
   image_url?: string | null
   is_edited?: boolean
+  reactions?: Record<string, string[]> | null
   created_at: string
   sender?: Profile
 }
